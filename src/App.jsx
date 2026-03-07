@@ -12,6 +12,15 @@ const ROTATION = ["Lower A","Upper A","Rest","Lower B","Upper B","Arms & Delts",
 const WEEK_TYPES = ["Learning","Accumulation","Deload","Peak"];
 const GOALS = [{name:"Cut",cpl:12},{name:"Maintain",cpl:14},{name:"Lean Bulk",cpl:16},{name:"Bulk",cpl:18}];
 
+// Volume targets: recommended weekly sets per muscle group for hypertrophy
+const VOL_TARGETS = { Quads:{min:10,max:20}, Hamstrings:{min:10,max:16}, Glutes:{min:6,max:16}, Chest:{min:10,max:20}, Back:{min:10,max:20}, Shoulders:{min:8,max:16}, Biceps:{min:6,max:14}, Triceps:{min:6,max:14}, Calves:{min:6,max:12} };
+
+// Navy method body fat
+function navyBF(waist, neck, height) {
+  if (!waist || !neck || !height || waist <= neck) return null;
+  return (86.010 * Math.log10(waist - neck) - 70.041 * Math.log10(height) + 36.76).toFixed(1);
+}
+
 function Timer({ duration, onDismiss }) {
   const [rem, setRem] = useState(duration);
   const [on, setOn] = useState(true);
@@ -73,17 +82,16 @@ export default function App() {
     </div>
   );
 
-  const tabs = [{id:"train",l:"Train"},{id:"fuel",l:"Fuel"},{id:"body",l:"Body"},{id:"stats",l:"Stats"}];
   return (
     <div style={{ background:C.bg, minHeight:"100vh", color:C.tx, fontFamily:sans, maxWidth:480, margin:"0 auto", paddingBottom:72 }}>
       {tab==="train" && !selDay && <DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} />}
-      {tab==="train" && selDay && <Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} />}
+      {tab==="train" && selDay && <Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} />}
       {tab==="fuel" && <Fuel foods={foods} mt={mt} setMt={setMt} />}
       {tab==="body" && <Body meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} />}
       {tab==="stats" && <Stats meas={meas} days={days} week={week} />}
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:C.sf, borderTop:`1px solid ${C.bd}`, display:"flex", zIndex:100 }}>
-        {tabs.map(t=>(
-          <button key={t.id} onClick={()=>{setTab(t.id);if(t.id!=="train")setSelDay(null);}} style={{ flex:1, padding:"12px 0 10px", background:"none", border:"none", color:tab===t.id?C.ac:C.mt, fontSize:11, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", cursor:"pointer", fontFamily:sans }}>{t.l}</button>
+        {["train","fuel","body","stats"].map(t=>(
+          <button key={t} onClick={()=>{setTab(t);if(t!=="train")setSelDay(null);}} style={{ flex:1, padding:"12px 0 10px", background:"none", border:"none", color:tab===t?C.ac:C.mt, fontSize:11, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", cursor:"pointer", fontFamily:sans }}>{t==="train"?"Train":t==="fuel"?"Fuel":t==="body"?"Body":"Stats"}</button>
         ))}
       </div>
     </div>
@@ -92,6 +100,22 @@ export default function App() {
 
 function DaySelect({ days, onSelect, week, setWeek, restDur, setRestDur, weekType, setWeekType }) {
   const [showCfg, setShowCfg] = useState(false);
+  const [weekComp, setWeekComp] = useState(null);
+
+  useEffect(() => { loadCompletion(); }, [week]);
+
+  async function loadCompletion() {
+    const { data } = await supabase.from("workout_sessions").select("id, training_day_id, workout_sets(reps)").eq("week_number", week);
+    if (!data || data.length === 0) { setWeekComp(null); return; }
+    let totalSets = 0, doneSets = 0;
+    // Count all exercises across all days for this week
+    const totalPossible = days.reduce((sum, d) => sum + d.exercises.reduce((s, e) => s + e.sets, 0), 0);
+    data.forEach(s => { s.workout_sets.forEach(ws => { totalSets++; if (ws.reps > 0) doneSets++; }); });
+    setWeekComp(totalPossible > 0 ? Math.round((doneSets / totalPossible) * 100) : 0);
+  }
+
+  const isDeload = weekType === "Deload";
+
   return (
     <div style={{ padding:"24px 16px" }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:2 }}>
@@ -103,7 +127,12 @@ function DaySelect({ days, onSelect, week, setWeek, restDur, setRestDur, weekTyp
           <button onClick={()=>setWeek(w=>w+1)} style={sbtn}>&gt;</button>
         </div>
       </div>
-      <div style={{ fontSize:12, color:C.mt, marginBottom:16 }}>{weekType} phase</div>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+        <span style={{ fontSize:12, color:isDeload?C.am:C.mt }}>{weekType}{isDeload?" — reduced volume":""}</span>
+        {weekComp !== null && (
+          <span style={{ fontSize:11, fontFamily:mono, color:weekComp===100?C.gn:weekComp>0?C.am:C.mt }}>{weekComp}% complete</span>
+        )}
+      </div>
 
       {showCfg && (
         <div style={{ background:C.sf, borderRadius:10, border:`1px solid ${C.bd}`, padding:14, marginBottom:14 }}>
@@ -111,9 +140,10 @@ function DaySelect({ days, onSelect, week, setWeek, restDur, setRestDur, weekTyp
             <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Week Phase</div>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               {WEEK_TYPES.map(t=>(
-                <button key={t} onClick={()=>setWeekType(t)} style={{ padding:"6px 12px", borderRadius:6, border:`1px solid ${weekType===t?C.ac:C.bd}`, background:weekType===t?C.ac+"15":"transparent", color:weekType===t?C.ac:C.mt, fontSize:12, cursor:"pointer" }}>{t}</button>
+                <button key={t} onClick={()=>setWeekType(t)} style={{ padding:"6px 12px", borderRadius:6, border:`1px solid ${weekType===t?t==="Deload"?C.am:C.ac:C.bd}`, background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent", color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt, fontSize:12, cursor:"pointer" }}>{t}</button>
               ))}
             </div>
+            {isDeload && <div style={{ fontSize:11, color:C.am, marginTop:8 }}>Deload: sets reduced to 2 per exercise, suggested weight at ~60% of last week</div>}
           </div>
           <div>
             <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Rest Timer</div>
@@ -144,7 +174,7 @@ function DaySelect({ days, onSelect, week, setWeek, restDur, setRestDur, weekTyp
   );
 }
 
-function Session({ day, onBack, week, restDur, weekType }) {
+function Session({ day, onBack, week, restDur, weekType, isDeload }) {
   const [expEx, setExpEx] = useState(0);
   const [showCues, setShowCues] = useState(null);
   const [sd, setSd] = useState({});
@@ -153,6 +183,9 @@ function Session({ day, onBack, week, restDur, weekType }) {
   const [timer, setTimer] = useState(false);
   const [tk, setTk] = useState(0);
   const [lw, setLw] = useState({});
+
+  // Deload: reduce sets to 2, suggest ~60% weight
+  function getEffectiveSets(ex) { return isDeload ? Math.min(ex.sets, 2) : ex.sets; }
 
   useEffect(() => { init(); loadLast(); }, [day.id, week]);
 
@@ -170,7 +203,13 @@ function Session({ day, onBack, week, restDur, weekType }) {
         const mw = Math.max(...v.map(s=>s.weight_lb));
         const ex = day.exercises.find(e=>e.id===parseInt(eid));
         const hit = ex && avg >= ex.repMax;
-        prog[eid] = { w:mw, r:avg, up:hit, sw:hit&&ex?mw+ex.increment:mw };
+
+        if (isDeload) {
+          // Deload: suggest ~60% of last weight, no progression
+          prog[eid] = { w:mw, r:avg, up:false, sw:Math.round(mw*0.6/2.5)*2.5, deload:true };
+        } else {
+          prog[eid] = { w:mw, r:avg, up:hit, sw:hit&&ex?mw+ex.increment:mw };
+        }
       });
       setLw(prog);
     }
@@ -201,35 +240,59 @@ function Session({ day, onBack, week, restDur, weekType }) {
   function fill(eid,n,w) { const u={}; for(let i=1;i<=n;i++){const k=`${eid}-${i}`;u[k]={...sd[k],weight:w,reps:sd[k]?.reps||0,dbId:sd[k]?.dbId};} setSd(p=>({...p,...u})); }
   function done(eid,n) { let c=0; for(let i=1;i<=n;i++) if(sd[`${eid}-${i}`]?.reps>0) c++; return c; }
 
+  // Session completion
+  const totalSets = day.exercises.reduce((s,e) => s + getEffectiveSets(e), 0);
+  const doneSets = day.exercises.reduce((s,e) => s + done(e.id, getEffectiveSets(e)), 0);
+  const compPct = totalSets > 0 ? Math.round((doneSets/totalSets)*100) : 0;
+
   return (
     <div style={{ padding:"20px 16px" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:4 }}>
         <button onClick={onBack} style={{ ...sbtn, fontSize:14, width:36, height:36 }}>&lt;</button>
         <div style={{ flex:1 }}>
           <div style={{ fontSize:18, fontWeight:700 }}>{day.name}</div>
           <div style={{ fontSize:11, color:C.mt }}>Week {week} · {weekType} · {day.focus}</div>
         </div>
-        {saved && <div style={{ fontSize:9, color:C.gn, fontFamily:mono }}>{saved}</div>}
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:16, fontWeight:700, fontFamily:mono, color:compPct===100?C.gn:compPct>0?C.am:C.mt }}>{compPct}%</div>
+          {saved && <div style={{ fontSize:8, color:C.gn, fontFamily:mono }}>{saved}</div>}
+        </div>
+      </div>
+
+      {isDeload && (
+        <div style={{ padding:"8px 12px", marginBottom:12, marginTop:8, background:C.am+"10", border:`1px solid ${C.am}22`, borderRadius:8, fontSize:11, color:C.am }}>
+          Deload week: 2 sets per exercise at ~60% intensity. Focus on form and recovery.
+        </div>
+      )}
+
+      {/* Completion bar */}
+      <div style={{ width:"100%", height:3, background:C.bd, borderRadius:2, marginBottom:14, marginTop:8, overflow:"hidden" }}>
+        <div style={{ width:`${compPct}%`, height:"100%", background:compPct===100?C.gn:C.ac, borderRadius:2, transition:"width 0.3s" }} />
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
         {day.exercises.map((ex,xi)=>{
-          const isE=expEx===xi, dn=done(ex.id,ex.sets), all=dn===ex.sets, pg=lw[ex.id];
+          const effSets = getEffectiveSets(ex);
+          const isE=expEx===xi, dn=done(ex.id,effSets), all=dn===effSets, pg=lw[ex.id];
           return (
             <div key={ex.id} style={{ background:C.sf, borderRadius:10, border:`1px solid ${all?C.gn+"28":C.bd}`, overflow:"hidden" }}>
               <button onClick={()=>setExpEx(isE?-1:xi)} style={{ width:"100%", padding:"12px 14px", background:"none", border:"none", color:C.tx, cursor:"pointer", display:"flex", alignItems:"center", gap:10, textAlign:"left" }}>
                 <div style={{ fontFamily:mono, fontSize:12, fontWeight:600, color:all?C.gn:C.mt, width:20, textAlign:"center" }}>{all?"✓":xi+1}</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{ex.name}</div>
-                  <div style={{ fontSize:11, color:C.mt, marginTop:1 }}>{ex.sets} × {ex.repMin}–{ex.repMax}{dn>0&&<span style={{color:all?C.gn:C.am}}> · {dn}/{ex.sets}</span>}</div>
+                  <div style={{ fontSize:11, color:C.mt, marginTop:1 }}>
+                    {effSets} × {ex.repMin}–{ex.repMax}
+                    {isDeload && ex.sets > effSets && <span style={{ color:C.am }}> (reduced from {ex.sets})</span>}
+                    {dn>0&&<span style={{color:all?C.gn:C.am}}> · {dn}/{effSets}</span>}
+                  </div>
                 </div>
-                {pg?.up && !all && <span style={{ fontSize:9, fontWeight:600, color:C.gn, background:C.gn+"12", padding:"2px 6px", borderRadius:4 }}>+{ex.increment}</span>}
+                {pg?.up && !all && !isDeload && <span style={{ fontSize:9, fontWeight:600, color:C.gn, background:C.gn+"12", padding:"2px 6px", borderRadius:4 }}>+{ex.increment}</span>}
+                {pg?.deload && <span style={{ fontSize:9, fontWeight:600, color:C.am, background:C.am+"12", padding:"2px 6px", borderRadius:4 }}>60%</span>}
                 <span style={{ color:C.mt+"66", transform:isE?"rotate(90deg)":"none", transition:"transform 0.15s", fontSize:14 }}>›</span>
               </button>
 
               {isE && (
                 <div style={{ padding:"0 14px 14px" }}>
-                  {/* Cues + Video */}
                   <div style={{ display:"flex", gap:6, marginBottom:8 }}>
                     <button onClick={()=>setShowCues(showCues===xi?null:xi)} style={{ flex:1, padding:"7px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.mt, fontSize:11, cursor:"pointer", textAlign:"left" }}>
                       {showCues===xi?ex.cues:"View setup cues"}
@@ -237,23 +300,30 @@ function Session({ day, onBack, week, restDur, weekType }) {
                     {ex.video && <a href={ex.video} target="_blank" rel="noopener noreferrer" style={{ padding:"7px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.ac, fontSize:11, textDecoration:"none", display:"flex", alignItems:"center" }}>Watch</a>}
                   </div>
 
-                  {/* Progression */}
-                  {pg?.up && (
+                  {pg?.deload && (
+                    <div style={{ padding:"7px 10px", marginBottom:8, background:C.am+"08", border:`1px solid ${C.am}22`, borderRadius:6, fontSize:11 }}>
+                      <span style={{ color:C.am }}>Deload: </span>
+                      <span style={{ color:C.tx }}>Last week {pg.w}lb. </span>
+                      <span style={{ color:C.am, fontWeight:600 }}>Suggested {pg.sw}lb (~60%)</span>
+                    </div>
+                  )}
+                  {pg?.up && !isDeload && (
                     <div style={{ padding:"7px 10px", marginBottom:8, background:C.gn+"08", border:`1px solid ${C.gn}22`, borderRadius:6, fontSize:11 }}>
                       <span style={{ color:C.gn }}>Progression: </span>
                       <span style={{ color:C.tx }}>Last week {pg.r.toFixed(1)} avg reps at {pg.w}lb. </span>
                       <span style={{ color:C.gn, fontWeight:600 }}>Try {pg.sw}lb</span>
                     </div>
                   )}
-                  {pg && !pg.up && <div style={{ padding:"5px 10px", marginBottom:8, background:C.sf2, borderRadius:6, fontSize:11, color:C.mt }}>Last week: {pg.w}lb · {pg.r.toFixed(1)} avg reps</div>}
+                  {pg && !pg.up && !pg.deload && <div style={{ padding:"5px 10px", marginBottom:8, background:C.sf2, borderRadius:6, fontSize:11, color:C.mt }}>Last week: {pg.w}lb · {pg.r.toFixed(1)} avg reps</div>}
 
-                  {/* Fill buttons */}
                   <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
-                    {pg?.up ? (<>
-                      <button onClick={()=>fill(ex.id,ex.sets,pg.sw)} style={{ padding:"5px 10px", background:C.gn+"10", border:`1px solid ${C.gn}33`, borderRadius:6, color:C.gn, fontSize:11, fontWeight:600, cursor:"pointer" }}>Fill {pg.sw}lb</button>
-                      <button onClick={()=>fill(ex.id,ex.sets,pg.w)} style={{ padding:"5px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.mt, fontSize:11, cursor:"pointer" }}>Keep {pg.w}lb</button>
+                    {pg?.deload ? (
+                      <button onClick={()=>fill(ex.id,effSets,pg.sw)} style={{ padding:"5px 10px", background:C.am+"10", border:`1px solid ${C.am}33`, borderRadius:6, color:C.am, fontSize:11, fontWeight:600, cursor:"pointer" }}>Fill {pg.sw}lb (deload)</button>
+                    ) : pg?.up ? (<>
+                      <button onClick={()=>fill(ex.id,effSets,pg.sw)} style={{ padding:"5px 10px", background:C.gn+"10", border:`1px solid ${C.gn}33`, borderRadius:6, color:C.gn, fontSize:11, fontWeight:600, cursor:"pointer" }}>Fill {pg.sw}lb</button>
+                      <button onClick={()=>fill(ex.id,effSets,pg.w)} style={{ padding:"5px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.mt, fontSize:11, cursor:"pointer" }}>Keep {pg.w}lb</button>
                     </>) : (
-                      <button onClick={()=>fill(ex.id,ex.sets,pg?.w||0)} style={{ padding:"5px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.mt, fontSize:11, cursor:"pointer" }}>Fill {pg?.w||0}lb</button>
+                      <button onClick={()=>fill(ex.id,effSets,pg?.w||0)} style={{ padding:"5px 10px", background:C.sf2, border:`1px solid ${C.bd}`, borderRadius:6, color:C.mt, fontSize:11, cursor:"pointer" }}>Fill {pg?.w||0}lb</button>
                     )}
                   </div>
 
@@ -262,7 +332,7 @@ function Session({ day, onBack, week, restDur, weekType }) {
                   <div style={{ display:"grid", gridTemplateColumns:"32px 1fr 1fr 44px", gap:5, marginBottom:4 }}>
                     <span style={hlbl}>Set</span><span style={hlbl}>Weight</span><span style={hlbl}>Reps</span><span style={hlbl}></span>
                   </div>
-                  {Array.from({length:ex.sets},(_,i)=>{
+                  {Array.from({length:effSets},(_,i)=>{
                     const sn=i+1, s=gs(ex.id,sn), ok=s.reps>0, hi=s.reps>ex.repMax, lo=s.reps>0&&s.reps<ex.repMin;
                     return (
                       <div key={i} style={{ display:"grid", gridTemplateColumns:"32px 1fr 1fr 44px", gap:5, marginBottom:5, alignItems:"center" }}>
@@ -313,17 +383,10 @@ function Fuel({ foods, mt, setMt }) {
   const flt = foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
 
   function recalc() {
-    const w = parseFloat(calcW)||205;
-    const goal = GOALS.find(g=>g.name===calcG)||GOALS[2];
-    const pr = parseFloat(calcP)||0.85;
-    const ft = parseFloat(calcF)||0.35;
-    const cal = Math.round(w * goal.cpl);
-    const protein = Math.round(w * pr);
-    const fat = Math.round(w * ft);
-    const carbs = Math.round((cal - protein*4 - fat*9) / 4);
-    setMt({ protein, carbs, fat, calories:cal });
-    // Update in DB
-    supabase.from("macro_targets").update({ protein_g_target:protein, carbs_g_target:carbs, fat_g_target:fat, calories_target:cal, bodyweight_lb:w, goal_name:calcG }).eq("is_active",true);
+    const w=parseFloat(calcW)||205, goal=GOALS.find(g=>g.name===calcG)||GOALS[2], pr=parseFloat(calcP)||0.85, ft=parseFloat(calcF)||0.35;
+    const cal=Math.round(w*goal.cpl), protein=Math.round(w*pr), fat=Math.round(w*ft), carbs=Math.round((cal-protein*4-fat*9)/4);
+    setMt({protein,carbs,fat,calories:cal});
+    supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);
     setShowCalc(false);
   }
 
@@ -333,81 +396,58 @@ function Fuel({ foods, mt, setMt }) {
         <div><div style={{ fontSize:20, fontWeight:700 }}>Fuel</div><div style={{ fontSize:11, color:C.mt }}>{calcG} · {mt.calories} cal</div></div>
         <button onClick={()=>setShowCalc(!showCalc)} style={{ padding:"6px 12px", background:C.sf, border:`1px solid ${C.bd}`, borderRadius:6, color:showCalc?C.ac:C.mt, fontSize:11, cursor:"pointer" }}>Calculator</button>
       </div>
-
       {showCalc && (
         <div style={{ background:C.sf, borderRadius:10, border:`1px solid ${C.bd}`, padding:14, marginBottom:14 }}>
           <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Macro Calculator</div>
           <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
-            {GOALS.map(g=>(
-              <button key={g.name} onClick={()=>setCalcG(g.name)} style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${calcG===g.name?C.ac:C.bd}`, background:calcG===g.name?C.ac+"15":"transparent", color:calcG===g.name?C.ac:C.mt, fontSize:11, cursor:"pointer" }}>{g.name}</button>
-            ))}
+            {GOALS.map(g=>(<button key={g.name} onClick={()=>setCalcG(g.name)} style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${calcG===g.name?C.ac:C.bd}`, background:calcG===g.name?C.ac+"15":"transparent", color:calcG===g.name?C.ac:C.mt, fontSize:11, cursor:"pointer" }}>{g.name}</button>))}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
-            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Weight (lb)</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={{...inp}} /></div>
-            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Protein/lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={{...inp}} /></div>
-            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Fat/lb</div><input type="number" value={calcF} onChange={e=>setCalcF(e.target.value)} style={{...inp}} /></div>
+            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Weight (lb)</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={inp} /></div>
+            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Protein/lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={inp} /></div>
+            <div><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase", marginBottom:4 }}>Fat/lb</div><input type="number" value={calcF} onChange={e=>setCalcF(e.target.value)} style={inp} /></div>
           </div>
           <button onClick={recalc} style={{ width:"100%", padding:"10px", background:C.ac, border:"none", borderRadius:8, color:C.bg, fontSize:13, fontWeight:700, cursor:"pointer" }}>Update Targets</button>
         </div>
       )}
-
-      {/* Macro bars */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
         {[{l:"Protein",v:Math.round(tot.protein),t:mt.protein,u:"g",c:C.gn},{l:"Carbs",v:Math.round(tot.carbs),t:mt.carbs,u:"g",c:C.bl},{l:"Fat",v:Math.round(tot.fat),t:mt.fat,u:"g",c:C.am},{l:"Cal",v:Math.round(tot.calories),t:mt.calories,u:"",c:C.ac}].map(m=>{
           const p=Math.round((m.v/m.t)*100);
-          return (
-            <div key={m.l} style={{ background:C.sf, borderRadius:10, padding:"10px 6px", textAlign:"center", border:`1px solid ${C.bd}` }}>
-              <div style={{ fontSize:16, fontWeight:700, fontFamily:mono, color:p>100?C.rd:m.c }}>{m.v}</div>
-              <div style={{ fontSize:9, color:C.mt }}>/ {m.t}{m.u}</div>
-              <div style={{ width:"100%", height:2, background:C.bd, borderRadius:1, marginTop:5, overflow:"hidden" }}><div style={{ width:`${Math.min(p,100)}%`, height:"100%", background:m.c, borderRadius:1 }} /></div>
-              <div style={{ fontSize:8, color:C.mt, marginTop:3, textTransform:"uppercase", letterSpacing:"0.05em" }}>{m.l}</div>
-            </div>
-          );
+          return (<div key={m.l} style={{ background:C.sf, borderRadius:10, padding:"10px 6px", textAlign:"center", border:`1px solid ${C.bd}` }}>
+            <div style={{ fontSize:16, fontWeight:700, fontFamily:mono, color:p>100?C.rd:m.c }}>{m.v}</div>
+            <div style={{ fontSize:9, color:C.mt }}>/ {m.t}{m.u}</div>
+            <div style={{ width:"100%", height:2, background:C.bd, borderRadius:1, marginTop:5, overflow:"hidden" }}><div style={{ width:`${Math.min(p,100)}%`, height:"100%", background:m.c, borderRadius:1 }} /></div>
+            <div style={{ fontSize:8, color:C.mt, marginTop:3, textTransform:"uppercase" }}>{m.l}</div>
+          </div>);
         })}
       </div>
-
       <button onClick={()=>setShowS(!showS)} style={{ width:"100%", padding:"10px", background:showS?C.sf2:C.ac+"10", border:`1px solid ${showS?C.bd:C.ac}25`, borderRadius:8, color:showS?C.mt:C.ac, fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:12 }}>{showS?"Close":"Add food"}</button>
-
       {showS && (
         <div style={{ background:C.sf, borderRadius:10, border:`1px solid ${C.bd}`, padding:12, marginBottom:12 }}>
           <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{...inp, marginBottom:8, textAlign:"left", paddingLeft:12}} autoFocus />
           <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:8 }}>
-            {["All","Protein","Carb","Fat","RTD Protein","Snack","Meal","Misc"].map(c=>(
-              <button key={c} onClick={()=>setCat(c)} style={{ padding:"3px 8px", borderRadius:12, border:`1px solid ${cat===c?C.ac:C.bd}`, background:cat===c?C.ac+"12":"transparent", color:cat===c?C.ac:C.mt, fontSize:10, cursor:"pointer" }}>{c}</button>
-            ))}
+            {["All","Protein","Carb","Fat","RTD Protein","Snack","Meal","Misc"].map(c=>(<button key={c} onClick={()=>setCat(c)} style={{ padding:"3px 8px", borderRadius:12, border:`1px solid ${cat===c?C.ac:C.bd}`, background:cat===c?C.ac+"12":"transparent", color:cat===c?C.ac:C.mt, fontSize:10, cursor:"pointer" }}>{c}</button>))}
           </div>
           <div style={{ maxHeight:220, overflowY:"auto" }}>
             {flt.length===0?<div style={{padding:16,textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:
-            flt.map(f=>(
-              <button key={f.id} onClick={()=>add(f)} style={{ width:"100%", padding:"8px 6px", background:"none", border:"none", borderBottom:`1px solid ${C.bd}`, color:C.tx, cursor:"pointer", textAlign:"left", display:"flex", justifyContent:"space-between" }}>
-                <div><div style={{ fontSize:12 }}>{f.name}</div><div style={{ fontSize:10, color:C.mt }}>{f.portion_size} {f.portion_unit}</div></div>
-                <div style={{ textAlign:"right" }}><div style={{ fontSize:11, fontFamily:mono, color:C.gn }}>{f.protein_g}p</div><div style={{ fontSize:9, color:C.mt }}>{f.calories}cal</div></div>
-              </button>
-            ))}
+            flt.map(f=>(<button key={f.id} onClick={()=>add(f)} style={{ width:"100%", padding:"8px 6px", background:"none", border:"none", borderBottom:`1px solid ${C.bd}`, color:C.tx, cursor:"pointer", textAlign:"left", display:"flex", justifyContent:"space-between" }}>
+              <div><div style={{ fontSize:12 }}>{f.name}</div><div style={{ fontSize:10, color:C.mt }}>{f.portion_size} {f.portion_unit}</div></div>
+              <div style={{ textAlign:"right" }}><div style={{ fontSize:11, fontFamily:mono, color:C.gn }}>{f.protein_g}p</div><div style={{ fontSize:9, color:C.mt }}>{f.calories}cal</div></div>
+            </button>))}
           </div>
         </div>
       )}
-
       {log.length>0 && (
         <div>
           <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>Today</div>
-          {log.map((m,i)=>(
-            <div key={m.id||i} style={{ background:C.sf, borderRadius:8, border:`1px solid ${C.bd}`, padding:"8px 12px", marginBottom:5, display:"flex", alignItems:"center", gap:8 }}>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:12, fontWeight:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{m.food}</div>
-                <div style={{ fontSize:10, color:C.mt, fontFamily:mono }}>{Math.round(m.protein*m.portions)}p · {Math.round(m.carbs*m.portions)}c · {Math.round(m.fat*m.portions)}f · {Math.round(m.calories*m.portions)}</div>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-                <button onClick={()=>up(i,m.portions-0.5)} style={tbtn}>-</button>
-                <span style={{ fontSize:12, fontFamily:mono, width:24, textAlign:"center" }}>{m.portions}</span>
-                <button onClick={()=>up(i,m.portions+0.5)} style={tbtn}>+</button>
-              </div>
-              <button onClick={()=>rm(i)} style={{ background:"none", border:"none", color:C.rd, fontSize:14, cursor:"pointer", padding:"2px" }}>×</button>
-            </div>
-          ))}
+          {log.map((m,i)=>(<div key={m.id||i} style={{ background:C.sf, borderRadius:8, border:`1px solid ${C.bd}`, padding:"8px 12px", marginBottom:5, display:"flex", alignItems:"center", gap:8 }}>
+            <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:12, fontWeight:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{m.food}</div><div style={{ fontSize:10, color:C.mt, fontFamily:mono }}>{Math.round(m.protein*m.portions)}p · {Math.round(m.carbs*m.portions)}c · {Math.round(m.fat*m.portions)}f · {Math.round(m.calories*m.portions)}</div></div>
+            <div style={{ display:"flex", alignItems:"center", gap:3 }}><button onClick={()=>up(i,m.portions-0.5)} style={tbtn}>-</button><span style={{ fontSize:12, fontFamily:mono, width:24, textAlign:"center" }}>{m.portions}</span><button onClick={()=>up(i,m.portions+0.5)} style={tbtn}>+</button></div>
+            <button onClick={()=>rm(i)} style={{ background:"none", border:"none", color:C.rd, fontSize:14, cursor:"pointer", padding:"2px" }}>×</button>
+          </div>))}
         </div>
       )}
-      {log.length===0&&!showS&&<div style={{textAlign:"center",padding:"36px 20px",color:C.mt}}><div style={{fontSize:13}}>No meals logged today</div></div>}
+      {log.length===0&&!showS&&<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>No meals logged today</div>}
     </div>
   );
 }
@@ -418,29 +458,41 @@ function Body({ meas, onAdd }) {
   async function save() {
     if(!fm.bodyweight_lb) return;
     const e = {}; Object.entries(fm).forEach(([k,v])=>{e[k]=k==="measure_date"?v:(parseFloat(v)||null);});
+    // Calculate body fat if we have the measurements
+    const lat = meas[meas.length-1];
+    const height = lat?.height_in || 70;
+    const waist = parseFloat(fm.waist_in);
+    const neck = parseFloat(fm.neck_in);
+    if (waist && neck && height) { e.body_fat_pct = parseFloat(navyBF(waist, neck, height)); }
+    e.height_in = height;
     const { data } = await supabase.from("measurements").insert(e).select().single();
     if (data) { onAdd(data); setShowF(false); }
   }
   const lat = meas[meas.length-1];
   const prev = meas.length>1?meas[meas.length-2]:null;
-  function delta(cur,prv) { if(!cur||!prv) return null; const d=(cur-prv).toFixed(1); return d>0?`+${d}`:d; }
+  function delta(cur,prv) { if(!cur||!prv) return null; const d=(cur-prv).toFixed(1); return parseFloat(d)>0?`+${d}`:d; }
+
+  // Calculate BF% for latest if it has the right fields
+  const latBF = lat?.body_fat_pct || (lat?.waist_in && lat?.neck_in && lat?.height_in ? navyBF(lat.waist_in, lat.neck_in, lat.height_in) : null);
 
   return (
     <div style={{ padding:"24px 16px" }}>
       <div style={{ fontSize:20, fontWeight:700, marginBottom:16 }}>Body</div>
       {lat && (
         <div style={{ background:C.sf, borderRadius:10, border:`1px solid ${C.bd}`, padding:16, marginBottom:12 }}>
-          <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:12 }}>{lat.measure_date}</div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em" }}>{lat.measure_date}</div>
+            {latBF && (
+              <div style={{ background:C.ac+"12", border:`1px solid ${C.ac}22`, borderRadius:6, padding:"4px 10px" }}>
+                <span style={{ fontSize:10, color:C.mt }}>BF </span>
+                <span style={{ fontSize:14, fontWeight:700, fontFamily:mono, color:C.ac }}>{latBF}%</span>
+              </div>
+            )}
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
             {[{l:"Weight",v:lat.bodyweight_lb,p:prev?.bodyweight_lb,u:"lb"},{l:"Chest",v:lat.chest_in,p:prev?.chest_in,u:"in"},{l:"Waist",v:lat.waist_in,p:prev?.waist_in,u:"in"},{l:"Hips",v:lat.hips_in,p:prev?.hips_in,u:"in"},{l:"R Arm",v:lat.r_arm_in,p:prev?.r_arm_in,u:"in"},{l:"L Arm",v:lat.l_arm_in,p:prev?.l_arm_in,u:"in"}].map(s=>{
               const d = delta(s.v, s.p);
-              return (
-                <div key={s.l}>
-                  <div style={{ fontSize:9, color:C.mt, textTransform:"uppercase" }}>{s.l}</div>
-                  <div style={{ fontSize:20, fontWeight:700, fontFamily:mono }}>{s.v??"—"}</div>
-                  <div style={{ fontSize:10, color:C.mt }}>{s.u} {d&&<span style={{color:parseFloat(d)>0?C.gn:C.rd}}>{d}</span>}</div>
-                </div>
-              );
+              return (<div key={s.l}><div style={{ fontSize:9, color:C.mt, textTransform:"uppercase" }}>{s.l}</div><div style={{ fontSize:20, fontWeight:700, fontFamily:mono }}>{s.v??"—"}</div><div style={{ fontSize:10, color:C.mt }}>{s.u} {d&&<span style={{color:parseFloat(d)>0?C.gn:C.rd}}>{d}</span>}</div></div>);
             })}
           </div>
         </div>
@@ -448,22 +500,31 @@ function Body({ meas, onAdd }) {
       <button onClick={()=>setShowF(!showF)} style={{ width:"100%", padding:"10px", background:C.ac+"10", border:`1px solid ${C.ac}25`, borderRadius:8, color:C.ac, fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:12 }}>{showF?"Cancel":"New measurement"}</button>
       {showF && (
         <div style={{ background:C.sf, borderRadius:10, border:`1px solid ${C.bd}`, padding:14, marginBottom:12 }}>
+          <div style={{ fontSize:10, color:C.mt, marginBottom:8 }}>Body fat % auto-calculates from waist + neck measurements (Navy method)</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-            {[{k:"measure_date",l:"Date",t:"date"},{k:"bodyweight_lb",l:"Weight (lb)",t:"number"},{k:"chest_in",l:"Chest",t:"number"},{k:"waist_in",l:"Waist",t:"number"},{k:"hips_in",l:"Hips",t:"number"},{k:"r_arm_in",l:"R Arm",t:"number"},{k:"l_arm_in",l:"L Arm",t:"number"},{k:"neck_in",l:"Neck",t:"number"}].map(f=>(
-              <div key={f.k}><label style={{ fontSize:9, color:C.mt, textTransform:"uppercase" }}>{f.l}</label>
+            {[{k:"measure_date",l:"Date",t:"date"},{k:"bodyweight_lb",l:"Weight (lb)",t:"number"},{k:"chest_in",l:"Chest",t:"number"},{k:"waist_in",l:"Waist *",t:"number"},{k:"hips_in",l:"Hips",t:"number"},{k:"r_arm_in",l:"R Arm",t:"number"},{k:"l_arm_in",l:"L Arm",t:"number"},{k:"neck_in",l:"Neck *",t:"number"}].map(f=>(
+              <div key={f.k}><label style={{ fontSize:9, color:f.k==="waist_in"||f.k==="neck_in"?C.ac:C.mt, textTransform:"uppercase" }}>{f.l}</label>
               <input type={f.t} inputMode={f.t==="number"?"decimal":undefined} value={fm[f.k]} onChange={e=>setFm(p=>({...p,[f.k]:e.target.value}))} style={{...inp, width:"100%", marginTop:3}} /></div>
             ))}
           </div>
-          <button onClick={save} style={{ width:"100%", padding:"10px", marginTop:12, background:C.ac, border:"none", borderRadius:8, color:C.bg, fontSize:13, fontWeight:700, cursor:"pointer" }}>Save</button>
+          {fm.waist_in && fm.neck_in && (
+            <div style={{ marginTop:8, padding:"6px 10px", background:C.ac+"08", borderRadius:6, fontSize:12, color:C.ac, textAlign:"center" }}>
+              Estimated BF: {navyBF(parseFloat(fm.waist_in), parseFloat(fm.neck_in), lat?.height_in || 70) || "—"}%
+            </div>
+          )}
+          <button onClick={save} style={{ width:"100%", padding:"10px", marginTop:10, background:C.ac, border:"none", borderRadius:8, color:C.bg, fontSize:13, fontWeight:700, cursor:"pointer" }}>Save</button>
         </div>
       )}
       <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>History</div>
-      {[...meas].reverse().map(m=>(
-        <div key={m.id} style={{ background:C.sf, borderRadius:8, border:`1px solid ${C.bd}`, padding:"8px 12px", marginBottom:4, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div><div style={{ fontSize:11, color:C.mt }}>{m.measure_date}</div><div style={{ fontSize:15, fontWeight:700, fontFamily:mono }}>{m.bodyweight_lb} lb</div></div>
-          <div style={{ fontSize:10, color:C.mt, fontFamily:mono }}>{m.chest_in&&`Ch:${m.chest_in} `}{m.waist_in&&`W:${m.waist_in} `}{m.r_arm_in&&`A:${m.r_arm_in}`}</div>
-        </div>
-      ))}
+      {[...meas].reverse().map(m=>{
+        const bf = m.body_fat_pct || (m.waist_in && m.neck_in && m.height_in ? navyBF(m.waist_in, m.neck_in, m.height_in) : null);
+        return (
+          <div key={m.id} style={{ background:C.sf, borderRadius:8, border:`1px solid ${C.bd}`, padding:"8px 12px", marginBottom:4, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div><div style={{ fontSize:11, color:C.mt }}>{m.measure_date}</div><div style={{ fontSize:15, fontWeight:700, fontFamily:mono }}>{m.bodyweight_lb} lb</div></div>
+            <div style={{ fontSize:10, color:C.mt, fontFamily:mono, textAlign:"right" }}>{bf&&<span style={{color:C.ac}}>BF:{bf}% </span>}{m.chest_in&&`Ch:${m.chest_in} `}{m.r_arm_in&&`A:${m.r_arm_in}`}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -485,50 +546,63 @@ function Stats({ meas, days, week }) {
   }
 
   async function loadVolume() {
-    // Get sets for current week to calculate volume per muscle group
-    const { data: sessions } = await supabase.from("workout_sessions").select("id, workout_sets(exercise_id, reps, exercises(primary_muscle))").eq("week_number", week);
-    if (sessions) {
+    const { data } = await supabase.from("workout_sessions").select("id, workout_sets(exercise_id, reps, exercises(primary_muscle))").eq("week_number",week);
+    if (data) {
       const muscles = {};
-      sessions.forEach(s => {
-        s.workout_sets.forEach(ws => {
-          if (ws.reps > 0 && ws.exercises?.primary_muscle) {
-            const m = ws.exercises.primary_muscle;
-            muscles[m] = (muscles[m] || 0) + 1;
-          }
-        });
-      });
+      data.forEach(s => { s.workout_sets.forEach(ws => { if (ws.reps > 0 && ws.exercises?.primary_muscle) { const m = ws.exercises.primary_muscle; muscles[m] = (muscles[m]||0) + 1; } }); });
       setVol(muscles);
     }
   }
 
   const wd = meas.filter(m=>m.bodyweight_lb);
   const volEntries = Object.entries(vol).sort((a,b)=>b[1]-a[1]);
-  const maxVol = volEntries.length>0?Math.max(...volEntries.map(v=>v[1])):1;
+  // Merge with targets
+  const allMuscles = [...new Set([...Object.keys(VOL_TARGETS), ...volEntries.map(v=>v[0])])];
+  const volData = allMuscles.map(m => ({ muscle:m, actual:vol[m]||0, min:VOL_TARGETS[m]?.min||0, max:VOL_TARGETS[m]?.max||20 })).sort((a,b)=>b.actual-a.actual);
+  const maxBar = Math.max(...volData.map(v=>Math.max(v.actual,v.max)), 1);
 
   return (
     <div style={{ padding:"24px 16px" }}>
       <div style={{ fontSize:20, fontWeight:700, marginBottom:4 }}>Stats</div>
       <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-        <button onClick={()=>setView("prs")} style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${view==="prs"?C.ac:C.bd}`, background:view==="prs"?C.ac+"15":"transparent", color:view==="prs"?C.ac:C.mt, fontSize:12, cursor:"pointer" }}>PRs</button>
-        <button onClick={()=>setView("vol")} style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${view==="vol"?C.ac:C.bd}`, background:view==="vol"?C.ac+"15":"transparent", color:view==="vol"?C.ac:C.mt, fontSize:12, cursor:"pointer" }}>Volume W{week}</button>
-        <button onClick={()=>setView("bw")} style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${view==="bw"?C.ac:C.bd}`, background:view==="bw"?C.ac+"15":"transparent", color:view==="bw"?C.ac:C.mt, fontSize:12, cursor:"pointer" }}>Bodyweight</button>
+        {[{id:"prs",l:"PRs"},{id:"vol",l:`Volume W${week}`},{id:"bw",l:"Weight"}].map(v=>(
+          <button key={v.id} onClick={()=>setView(v.id)} style={{ padding:"6px 14px", borderRadius:6, border:`1px solid ${view===v.id?C.ac:C.bd}`, background:view===v.id?C.ac+"15":"transparent", color:view===v.id?C.ac:C.mt, fontSize:12, cursor:"pointer" }}>{v.l}</button>
+        ))}
       </div>
 
       {view==="vol" && (
         <div>
-          <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Weekly Sets by Muscle — Week {week}</div>
-          {volEntries.length === 0 ? (
-            <div style={{ padding:24, textAlign:"center", color:C.mt, fontSize:12 }}>No data for this week yet</div>
-          ) : volEntries.map(([muscle, sets])=>(
-            <div key={muscle} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-              <div style={{ width:80, fontSize:11, color:C.tx, textAlign:"right" }}>{muscle}</div>
-              <div style={{ flex:1, height:18, background:C.sf, borderRadius:4, overflow:"hidden" }}>
-                <div style={{ width:`${(sets/maxVol)*100}%`, height:"100%", background:C.ac+"44", borderRadius:4, display:"flex", alignItems:"center", paddingLeft:6 }}>
-                  <span style={{ fontSize:10, fontFamily:mono, color:C.ac, fontWeight:600 }}>{sets}</span>
+          <div style={{ fontSize:10, fontWeight:600, color:C.mt, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Weekly Sets vs Target — Week {week}</div>
+          {volData.length===0?<div style={{padding:24,textAlign:"center",color:C.mt,fontSize:12}}>No data yet</div>:
+          volData.map(v=>{
+            const inRange = v.actual >= v.min && v.actual <= v.max;
+            const over = v.actual > v.max;
+            const under = v.actual > 0 && v.actual < v.min;
+            const barColor = v.actual === 0 ? C.mt+"33" : inRange ? C.gn : over ? C.am : C.rd;
+            const status = v.actual === 0 ? "" : inRange ? "ok" : over ? "high" : under ? "low" : "";
+            return (
+              <div key={v.muscle} style={{ marginBottom:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:3 }}>
+                  <span style={{ fontSize:11, color:C.tx }}>{v.muscle}</span>
+                  <span style={{ fontSize:10, fontFamily:mono, color:barColor }}>
+                    {v.actual} <span style={{ color:C.mt }}>/ {v.min}–{v.max}</span>
+                    {status && <span style={{ marginLeft:4, fontSize:9 }}>({status})</span>}
+                  </span>
+                </div>
+                <div style={{ position:"relative", width:"100%", height:12, background:C.sf, borderRadius:3, overflow:"hidden" }}>
+                  {/* Target range indicator */}
+                  <div style={{ position:"absolute", left:`${(v.min/maxBar)*100}%`, width:`${((v.max-v.min)/maxBar)*100}%`, height:"100%", background:C.mt+"15", borderRadius:3 }} />
+                  {/* Actual bar */}
+                  <div style={{ position:"relative", width:`${(v.actual/maxBar)*100}%`, height:"100%", background:barColor+"66", borderRadius:3 }} />
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+          <div style={{ display:"flex", gap:12, marginTop:12, fontSize:10, color:C.mt }}>
+            <span><span style={{ color:C.gn }}>●</span> In range</span>
+            <span><span style={{ color:C.rd }}>●</span> Below</span>
+            <span><span style={{ color:C.am }}>●</span> Above</span>
+          </div>
         </div>
       )}
 
@@ -548,15 +622,13 @@ function Stats({ meas, days, week }) {
           <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", gap:0, marginBottom:6 }}>
             {["Exercise","Best","Reps","E1RM"].map(h=><div key={h} style={{ fontSize:9, fontWeight:600, color:C.mt, textTransform:"uppercase", paddingBottom:6, borderBottom:`1px solid ${C.bd}` }}>{h}</div>)}
           </div>
-          {prs.map(pr=>(
-            <div key={pr.exercise} style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", padding:"7px 0", borderBottom:`1px solid ${C.bd}` }}>
-              <div style={{ fontSize:11, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:6 }}>{pr.exercise}</div>
-              <div style={{ fontSize:11, fontFamily:mono, color:C.ac }}>{pr.weight}</div>
-              <div style={{ fontSize:11, fontFamily:mono, color:C.mt }}>{pr.reps}</div>
-              <div style={{ fontSize:11, fontFamily:mono, color:C.gn }}>{Math.round(pr.est1rm)}</div>
-            </div>
-          ))}
-        </>):(<div style={{textAlign:"center",padding:"36px 20px",color:C.mt}}><div style={{fontSize:13}}>No PRs yet</div></div>)}
+          {prs.map(pr=>(<div key={pr.exercise} style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", padding:"7px 0", borderBottom:`1px solid ${C.bd}` }}>
+            <div style={{ fontSize:11, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:6 }}>{pr.exercise}</div>
+            <div style={{ fontSize:11, fontFamily:mono, color:C.ac }}>{pr.weight}</div>
+            <div style={{ fontSize:11, fontFamily:mono, color:C.mt }}>{pr.reps}</div>
+            <div style={{ fontSize:11, fontFamily:mono, color:C.gn }}>{Math.round(pr.est1rm)}</div>
+          </div>))}
+        </>):(<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>No PRs yet</div>)}
       </>)}
     </div>
   );
