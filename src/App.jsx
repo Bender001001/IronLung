@@ -112,7 +112,7 @@ export default function App(){
 }
 
 function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online}){
-  const[showCfg,setShowCfg]=useState(false);const[wc,setWc]=useState(null);const[summary,setSummary]=useState(null);const[showSum,setShowSum]=useState(false);
+  const[showCfg,setShowCfg]=useState(false);const[wc,setWc]=useState(null);const[summary,setSummary]=useState(null);const[showSum,setShowSum]=useState(false);const[dismissedDL,setDismissedDL]=useState(false);
   useEffect(()=>{lc();loadSummary();},[week]);
   async function lc(){if(!online){setWc(null);return;}try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(reps)").eq("week_number",week);if(!data?.length){setWc(null);return;}const tp=days.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);let dn=0;data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0)dn++;}));setWc(tp>0?Math.round((dn/tp)*100):0);}catch{setWc(null);}}
   async function loadSummary(){if(!online)return;try{const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle))").eq("week_number",week);if(!data?.length){setSummary(null);return;}
@@ -146,6 +146,17 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         {wc!==null&&(<div style={{display:"flex",alignItems:"center",gap:6,flex:1}}><div style={{flex:1,height:3,background:C.bd,borderRadius:2,overflow:"hidden"}}><div style={{width:`${wc}%`,height:"100%",background:wcColor,borderRadius:2,transition:"width 0.4s"}}/></div><span style={{fontFamily:mono,fontSize:11,fontWeight:600,color:wcColor,minWidth:30,textAlign:"right"}}>{wc}%</span></div>)}
         {summary&&<button onClick={()=>setShowSum(!showSum)} style={{...btnGhost,fontSize:10,padding:"4px 10px",color:showSum?C.ac:C.mt,borderColor:showSum?`${C.ac}40`:C.bd,flexShrink:0}}>{showSum?"Close":"Summary"}</button>}
       </div>
+      {/* Deload suggestion — appears on every 4th week if not already set */}
+      {week%4===0&&!isDL&&!dismissedDL&&(
+        <div style={{background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.am}}>Deload week?</div>
+            <div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} is typically a deload in a 16-week block.</div>
+          </div>
+          <button onClick={()=>{setWeekType("Deload");setDismissedDL(true);}} style={{padding:"6px 12px",background:`${C.am}18`,border:`1px solid ${C.am}44`,borderRadius:8,color:C.am,fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>Switch</button>
+          <button onClick={()=>setDismissedDL(true)} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button>
+        </div>
+      )}
       {/* Summary panel */}
       {showSum&&summary&&(
         <div style={{...card,marginBottom:14}}>
@@ -459,19 +470,56 @@ function Body({meas,onAdd,online,onPC}){
   );
 }
 
+// SVG line chart — reused for bodyweight and muscle trend
+function LineChart({points,color,height=90}){
+  if(!points||points.length<2)return null;
+  const W=400,H=height-20;
+  const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const rx=maxX-minX||1,ry=maxY-minY||1;
+  const px=x=>((x-minX)/rx)*(W-24)+12;
+  const py=y=>H-((y-minY)/ry)*(H-14)-2;
+  const ptStr=points.map(p=>`${px(p.x)},${py(p.y)}`).join(" ");
+  const last=points[points.length-1];
+  return(
+    <svg viewBox={`0 0 ${W} ${height}`} style={{width:"100%",height,display:"block",overflow:"visible"}}>
+      {/* Glow */}
+      <polyline points={ptStr} fill="none" stroke={`${color}25`} strokeWidth="10" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* Line */}
+      <polyline points={ptStr} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* Dots */}
+      {points.map((p,i)=><circle key={i} cx={px(p.x)} cy={py(p.y)} r="3" fill={color} stroke={C.bg} strokeWidth="1.5"/>)}
+      {/* Latest label */}
+      <text x={px(last.x)} y={py(last.y)-8} textAnchor="middle" fontSize="9" fill={color} fontFamily="JetBrains Mono,monospace" fontWeight="600">{last.y}</text>
+      {/* X labels: first and last week */}
+      <text x={px(points[0].x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">W{points[0].x}</text>
+      <text x={px(last.x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">W{last.x}</text>
+    </svg>
+  );
+}
+
 function Stats({meas,week,online}){
-  const[prs,setPrs]=useState([]);const[vol,setVol]=useState({});const[view,setView]=useState("prs");
-  useEffect(()=>{loadPRs();loadVol();},[week]);
-  // Data functions unchanged
+  const[prs,setPrs]=useState([]);const[vol,setVol]=useState({});const[muscleTrend,setMuscleTrend]=useState({});const[view,setView]=useState("prs");const[selMuscle,setSelMuscle]=useState(null);
+  useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();},[week]);
+
+  // All data queries — unchanged logic, new muscle trend added
   async function loadPRs(){try{const{data}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,exercises(name)").order("weight_lb",{ascending:false});if(data){const best={};data.forEach(s=>{const n=s.exercises?.name;if(!n||!s.weight_lb||!s.reps)return;const e1=s.weight_lb*(1+s.reps/30);if(!best[n]||e1>best[n].est1rm)best[n]={exercise:n,weight:s.weight_lb,reps:s.reps,est1rm:e1};});const p=Object.values(best).sort((a,b)=>b.est1rm-a.est1rm);setPrs(p);cache.set("prs",p);}}catch{const c=cache.get("prs");if(c)setPrs(c);}}
   async function loadVol(){try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,reps,exercises(primary_muscle))").eq("week_number",week);if(data){const m={};data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0&&ws.exercises?.primary_muscle){const mu=ws.exercises.primary_muscle;m[mu]=(m[mu]||0)+1;}}));setVol(m);}}catch{}}
+  async function loadMuscleTrend(){try{const{data}=await supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0);if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
+
   const wd=meas.filter(m=>m.bodyweight_lb);
+  const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
   const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])];
   const volD=allM.map(m=>({muscle:m,actual:vol[m]||0,min:VOL_TARGETS[m]?.min||0,max:VOL_TARGETS[m]?.max||20})).sort((a,b)=>b.actual-a.actual);
   const maxB=Math.max(...volD.map(v=>Math.max(v.actual,v.max)),1);
-  // Highlights: top E1RM, top raw weight
   const topPR=prs[0];
   const topRaw=prs.length?[...prs].sort((a,b)=>b.weight-a.weight)[0]:null;
+  const muscleKeys=Object.keys(muscleTrend).sort();
+  const activeMuscle=selMuscle&&muscleTrend[selMuscle]?selMuscle:muscleKeys[0]||null;
+
+  // Muscle colors for variety
+  const muscleColors={Chest:C.ac,Back:C.bl,Quads:C.gn,Hamstrings:"#5bc4a8",Glutes:"#a07aff",Shoulders:C.am,Biceps:"#ff7aaa",Triceps:"#ff9f5b",Calves:C.mt,Glutes:C.rd};
+  const getMC=m=>muscleColors[m]||C.ac;
 
   return(
     <div style={{padding:"24px 16px"}}>
@@ -494,9 +542,9 @@ function Stats({meas,week,online}){
       )}
 
       {/* Tab pills */}
-      <div style={{display:"flex",gap:6,marginBottom:16,background:C.sf2,borderRadius:10,padding:4}}>
-        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"}].map(v=>(
-          <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:12,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>
+      <div style={{display:"flex",gap:4,marginBottom:16,background:C.sf2,borderRadius:10,padding:4}}>
+        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"},{id:"muscle",l:"Muscle"}].map(v=>(
+          <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:11,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>
             {v.l}
           </button>
         ))}
@@ -530,25 +578,49 @@ function Stats({meas,week,online}){
         </div>
       )}
 
-      {/* Bodyweight trend */}
-      {view==="bw"&&wd.length>1&&(
-        <div>
-          <div style={{...hlbl,marginBottom:12}}>Bodyweight trend</div>
-          <div style={{display:"flex",alignItems:"flex-end",gap:4,height:80}}>
-            {wd.map(m=>{
-              const mn=Math.min(...wd.map(d=>d.bodyweight_lb)),mx=Math.max(...wd.map(d=>d.bodyweight_lb)),rn=mx-mn||1,h=((m.bodyweight_lb-mn)/rn)*60+10;
-              return(
-                <div key={m.id} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                  <span style={{fontSize:9,fontFamily:mono,color:C.tx}}>{m.bodyweight_lb}</span>
-                  <div style={{width:"100%",height:h,background:`${C.ac}55`,borderRadius:3,maxWidth:32}}/>
-                  <span style={{fontSize:7,color:C.mt}}>{m.measure_date?.slice(5)}</span>
-                </div>
-              );
-            })}
+      {/* Bodyweight line chart */}
+      {view==="bw"&&(
+        bwPoints.length>=2?(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
+              <div style={{...hlbl}}>Bodyweight trend</div>
+              <div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bwPoints[0].y} → <span style={{color:C.ac,fontWeight:600}}>{bwPoints[bwPoints.length-1].y} lb</span></div>
+            </div>
+            <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"14px 10px 6px"}}>
+              <LineChart points={bwPoints} color={C.ac} height={100}/>
+            </div>
           </div>
-        </div>
+        ):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet</div>
       )}
-      {view==="bw"&&wd.length<=1&&<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet</div>}
+
+      {/* Muscle strength trend */}
+      {view==="muscle"&&(
+        muscleKeys.length>0?(
+          <div>
+            <div style={{...hlbl,marginBottom:10}}>Max weight by muscle — all weeks</div>
+            {/* Muscle selector pills */}
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
+              {muscleKeys.map(m=>(
+                <button key={m} onClick={()=>setSelMuscle(m)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${activeMuscle===m?getMC(m)+"55":C.bd}`,background:activeMuscle===m?getMC(m)+"14":"transparent",color:activeMuscle===m?getMC(m):C.mt,fontSize:11,fontWeight:activeMuscle===m?600:400,cursor:"pointer"}}>
+                  {m}
+                </button>
+              ))}
+            </div>
+            {/* Chart for selected muscle */}
+            {activeMuscle&&muscleTrend[activeMuscle]&&(
+              <div style={{background:C.sf,borderRadius:12,border:`1px solid ${getMC(activeMuscle)}22`,padding:"14px 10px 6px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8,paddingLeft:4,paddingRight:4}}>
+                  <div style={{fontSize:13,fontWeight:600,color:getMC(activeMuscle)}}>{activeMuscle}</div>
+                  <div style={{fontFamily:mono,fontSize:11,color:C.mt}}>
+                    {muscleTrend[activeMuscle][0].y} → <span style={{color:getMC(activeMuscle),fontWeight:600}}>{muscleTrend[activeMuscle][muscleTrend[activeMuscle].length-1].y} lb</span>
+                  </div>
+                </div>
+                <LineChart points={muscleTrend[activeMuscle]} color={getMC(activeMuscle)} height={100}/>
+              </div>
+            )}
+          </div>
+        ):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>No training data yet</div>
+      )}
 
       {/* PRs table */}
       {view==="prs"&&(
