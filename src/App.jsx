@@ -298,6 +298,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
 
 function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const[calcW,setCalcW]=useState("205");const[calcG,setCalcG]=useState("Lean Bulk");const[calcP,setCalcP]=useState("0.85");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(new Date().toISOString().split("T")[0]);
+  const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
   async function loadRecent(){try{const yesterday=new Date(Date.now()-86400000).toISOString().split("T")[0];const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
@@ -308,6 +309,21 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   const tot=log.reduce((a,m)=>({protein:a.protein+(m.protein||0)*m.portions,carbs:a.carbs+(m.carbs||0)*m.portions,fat:a.fat+(m.fat||0)*m.portions,calories:a.calories+(m.calories||0)*m.portions}),{protein:0,carbs:0,fat:0,calories:0});
   const flt=foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
   function recalc(){const w=parseFloat(calcW)||205,goal=GOALS.find(g=>g.name===calcG)||GOALS[2],pr=parseFloat(calcP)||0.85,ft=parseFloat(calcF)||0.35;const cal=Math.round(w*goal.cpl),protein=Math.round(w*pr),fat=Math.round(w*ft),carbs=Math.round((cal-protein*4-fat*9)/4);setMt({protein,carbs,fat,calories:cal});cache.set("mt",{protein,carbs,fat,calories:cal});try{supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);}catch{}setShowCalc(false);}
+
+  // AI food parser
+  function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
+  async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);
+    try{const res=await fetch("/api/ai-parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:aiText||undefined,imageBase64:aiImg||undefined,mimeType:aiImgMime})});const data=await res.json();if(data.error)throw new Error(data.error);setAiResult({...data,protein_g:parseFloat(data.protein_g)||0,carbs_g:parseFloat(data.carbs_g)||0,fat_g:parseFloat(data.fat_g)||0,calories:parseFloat(data.calories)||0,portion_size:parseFloat(data.portion_size)||1});}
+    catch(err){setAiError(err.message||"Something went wrong");}finally{setAiLoading(false);}}
+  async function logAIResult(saveToDb){if(!aiResult)return;
+    if(saveToDb){const entry={name:aiResult.name,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving",protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,category:"Meal"};try{const{data}=await supabase.from("foods").insert(entry).select().single();if(data){setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));await add(data,1);return;}}catch{}}
+    // Log directly without saving to DB
+    const tempFood={id:`ai_${Date.now()}`,name:aiResult.name,protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving"};
+    const entry={id:`t_${Date.now()}`,food:tempFood.name,portions:1,protein:tempFood.protein_g,carbs:tempFood.carbs_g,fat:tempFood.fat_g,calories:tempFood.calories,foodId:null};
+    setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});
+    try{if(!saveToDb){const{data:ins}=await supabase.from("meal_log").insert({log_date:td,food_id:null,portions:1,notes:tempFood.name,protein_override:tempFood.protein_g,carbs_override:tempFood.carbs_g,fat_override:tempFood.fat_g,calories_override:tempFood.calories}).select().single();if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}}catch{}
+    setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);}
+
   return(
     <div style={{padding:"24px 16px"}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
@@ -347,12 +363,67 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{(showRecent?recentFoods:recentFoods.slice(0,6)).map(f=><button key={f.id} onClick={()=>add(f,f.lastPortions||1)} style={{padding:"7px 10px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:8,color:C.tx,fontSize:11,cursor:"pointer",display:"flex",gap:5,alignItems:"center"}}><span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name.length>18?f.name.slice(0,18)+"…":f.name}</span><span style={{fontFamily:mono,fontSize:10,color:C.gn,flexShrink:0}}>{f.protein_g}p</span></button>)}</div>
         </div>
       )}
+      {/* AI Log button */}
+      <button onClick={()=>{setShowAI(!showAI);setShowS(false);setShowAdd(false);setAiResult(null);setAiError(null);}} style={{...btnP,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:showAI?C.sf2:C.ac,color:showAI?C.mt:C.bg,border:showAI?`1px solid ${C.bd}`:"none"}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={showAI?C.mt:C.bg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        {showAI?"Close AI Log":"AI Log — photo or text"}
+      </button>
+
+      {/* AI Log panel */}
+      {showAI&&(
+        <div style={{...card,marginBottom:12}}>
+          <div style={{...hlbl,marginBottom:10}}>Snap a label, meal, or just type what you ate</div>
+
+          {/* Photo input */}
+          <input ref={aiFileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handleAIPhoto}/>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            <button onClick={()=>aiFileRef.current?.click()} style={{flex:1,padding:"10px",background:aiImg?`${C.gn}12`:C.sf2,border:`1px solid ${aiImg?C.gn+"44":C.bd}`,borderRadius:10,color:aiImg?C.gn:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              {aiImg?"Photo ready ✓":"Take / upload photo"}
+            </button>
+            {aiImg&&<button onClick={()=>setAiImg(null)} style={{...btnGhost,padding:"10px 12px",color:C.rd,borderColor:`${C.rd}33`}}>×</button>}
+          </div>
+
+          {/* Text input */}
+          <textarea value={aiText} onChange={e=>setAiText(e.target.value)} placeholder={'e.g. "2 scrambled eggs, cup of oatmeal with honey"
+or paste a nutrition label'} style={{...inpL,height:70,resize:"none",padding:"10px 12px",lineHeight:1.5,marginBottom:10}}/>
+
+          {/* Parse button */}
+          <button onClick={runAIParse} disabled={aiLoading||(!aiText&&!aiImg)} style={{...btnP,opacity:aiLoading||(!aiText&&!aiImg)?0.5:1,marginBottom:aiError||aiResult?10:0}}>
+            {aiLoading?"Analyzing...":"Parse with AI"}
+          </button>
+
+          {/* Error */}
+          {aiError&&<div style={{padding:"8px 10px",background:`${C.rd}10`,border:`1px solid ${C.rd}33`,borderRadius:8,fontSize:11,color:C.rd}}>{aiError}</div>}
+
+          {/* Result confirmation */}
+          {aiResult&&(
+            <div style={{background:C.sf2,borderRadius:10,border:`1px solid ${C.gn}33`,padding:12}}>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>{aiResult.name}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
+                {[{l:"Protein",v:"protein_g",c:C.gn},{l:"Carbs",v:"carbs_g",c:C.bl},{l:"Fat",v:"fat_g",c:C.am},{l:"Calories",v:"calories",c:C.ac}].map(f=>(
+                  <div key={f.l}>
+                    <div style={{...hlbl,color:f.c,marginBottom:3}}>{f.l}</div>
+                    <input type="number" value={aiResult[f.v]} onChange={e=>setAiResult(p=>({...p,[f.v]:parseFloat(e.target.value)||0}))} style={{...inp,fontSize:13,borderColor:`${f.c}33`}}/>
+                  </div>
+                ))}
+              </div>
+              {aiResult.notes&&<div style={{fontSize:10,color:C.mt,marginBottom:10,fontStyle:"italic"}}>{aiResult.notes}</div>}
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>logAIResult(false)} style={{...btnS,flex:1}}>Log only</button>
+                <button onClick={()=>logAIResult(true)} style={{...btnP,flex:1,fontSize:12}}>Log + save to DB</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <button onClick={()=>{setShowS(!showS);setShowAdd(false);}} style={{...btnS,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+        <button onClick={()=>{setShowS(!showS);setShowAdd(false);setShowAI(false);}} style={{...btnS,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={showS?C.mt:C.ac} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           {showS?"Close search":"Search foods"}
         </button>
-        <button onClick={()=>{setShowAdd(!showAdd);setShowS(false);}} style={{...btnGhost,padding:"11px 14px",flexShrink:0,borderColor:showAdd?`${C.ac}44`:C.bd,color:showAdd?C.ac:C.mt}}>+ New</button>
+        <button onClick={()=>{setShowAdd(!showAdd);setShowS(false);setShowAI(false);}} style={{...btnGhost,padding:"11px 14px",flexShrink:0,borderColor:showAdd?`${C.ac}44`:C.bd,color:showAdd?C.ac:C.mt}}>+ New</button>
       </div>
       {showAdd&&(
         <div style={{...card,marginBottom:12}}>
