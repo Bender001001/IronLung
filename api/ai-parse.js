@@ -1,3 +1,6 @@
+// Cache the model name across warm serverless invocations
+let cachedModel = null;
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -7,8 +10,8 @@ export default async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "API key not configured" });
 
-  // Auto-detect which model is available for this API key
   async function findModel() {
+    if (cachedModel) return cachedModel;
     const candidates = [
       "gemini-2.5-flash",
       "gemini-2.5-pro",
@@ -30,10 +33,10 @@ export default async function handler(req, res) {
           .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
           .map(m => m.name.replace("models/", ""));
         for (const c of candidates) {
-          if (available.includes(c)) return c;
+          if (available.includes(c)) { cachedModel = c; return c; }
         }
         const fallback = available.find(m => m.includes("flash")) || available[0];
-        if (fallback) return fallback;
+        if (fallback) { cachedModel = fallback; return fallback; }
       }
     } catch {}
     return "gemini-2.5-flash";
@@ -83,6 +86,8 @@ Food to analyze: ${text || "See image"}`;
     );
 
     if (!response.ok) {
+      // If the cached model stops working, clear cache and let it re-detect next time
+      cachedModel = null;
       const err = await response.text();
       return res.status(500).json({ error: "Gemini error", detail: err });
     }
