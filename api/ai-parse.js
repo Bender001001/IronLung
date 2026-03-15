@@ -7,6 +7,40 @@ export default async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "API key not configured" });
 
+  // Auto-detect which model is available for this API key
+  async function findModel() {
+    const candidates = [
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-2.0-flash-001",
+      "gemini-2.0-flash",
+      "gemini-2.0-flash-lite",
+      "gemini-1.5-flash-latest",
+      "gemini-1.5-flash-001",
+      "gemini-1.5-flash",
+      "gemini-1.0-pro",
+    ];
+    try {
+      const listRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+      );
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const available = (listData.models || [])
+          .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+          .map(m => m.name.replace("models/", ""));
+        for (const c of candidates) {
+          if (available.includes(c)) return c;
+        }
+        const fallback = available.find(m => m.includes("flash")) || available[0];
+        if (fallback) return fallback;
+      }
+    } catch {}
+    return "gemini-2.5-flash";
+  }
+
+  const model = await findModel();
+
   const prompt = `You are a nutrition expert. Analyze the food described or shown and return ONLY a JSON object with these exact fields. No markdown, no explanation, just raw JSON.
 
 {
@@ -21,7 +55,7 @@ export default async function handler(req, res) {
 }
 
 Rules:
-- If multiple foods are described (e.g. "2 eggs and toast"), combine them into one entry with a combined name
+- If multiple foods are described, combine into one entry with a combined name
 - Round all numbers to 1 decimal place
 - Use common portion units: serving, g, oz, cup, tbsp, piece, slice
 - If you see a nutrition label in an image, use those exact numbers
@@ -30,20 +64,14 @@ Rules:
 
 Food to analyze: ${text || "See image"}`;
 
-  // Build content parts
   const parts = [{ text: prompt }];
   if (imageBase64) {
-    parts.push({
-      inline_data: {
-        mime_type: mimeType || "image/jpeg",
-        data: imageBase64,
-      },
-    });
+    parts.push({ inline_data: { mime_type: mimeType || "image/jpeg", data: imageBase64 } });
   }
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,12 +89,9 @@ Food to analyze: ${text || "See image"}`;
 
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    // Strip any markdown fences just in case
     const clean = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(clean);
-
-    return res.status(200).json(parsed);
+    return res.status(200).json({ ...parsed, _model: model });
   } catch (err) {
     return res.status(500).json({ error: "Failed to parse response", detail: err.message });
   }
