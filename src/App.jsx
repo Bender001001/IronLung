@@ -375,7 +375,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
           <div style={{...hlbl,marginBottom:10}}>Snap a label, meal, or just type what you ate</div>
 
           {/* Photo input */}
-          <input ref={aiFileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handleAIPhoto}/>
+          <input ref={aiFileRef} type="file" style={{display:"none"}} onChange={handleAIPhoto}/>
           <div style={{display:"flex",gap:8,marginBottom:10}}>
             <button onClick={()=>aiFileRef.current?.click()} style={{flex:1,padding:"10px",background:aiImg?`${C.gn}12`:C.sf2,border:`1px solid ${aiImg?C.gn+"44":C.bd}`,borderRadius:10,color:aiImg?C.gn:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
