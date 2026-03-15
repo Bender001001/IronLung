@@ -385,8 +385,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
           </div>
 
           {/* Text input */}
-          <textarea value={aiText} onChange={e=>setAiText(e.target.value)} placeholder={'e.g. "2 scrambled eggs, cup of oatmeal with honey"
-or paste a nutrition label'} style={{...inpL,height:70,resize:"none",padding:"10px 12px",lineHeight:1.5,marginBottom:10}}/>
+          <textarea value={aiText} onChange={e=>setAiText(e.target.value)} placeholder={'e.g. "2 scrambled eggs, cup of oatmeal with honey" — or paste a nutrition label'} style={{...inpL,height:70,resize:"none",padding:"10px 12px",lineHeight:1.5,marginBottom:10}}/>
 
           {/* Parse button */}
           <button onClick={runAIParse} disabled={aiLoading||(!aiText&&!aiImg)} style={{...btnP,opacity:aiLoading||(!aiText&&!aiImg)?0.5:1,marginBottom:aiError||aiResult?10:0}}>
