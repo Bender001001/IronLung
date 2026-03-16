@@ -35,28 +35,11 @@ export default async function handler(req, res) {
 
   const model = await findModel();
 
-  const prompt = `You are a nutrition expert. Analyze the food described or shown.
-Return ONLY a valid JSON object — no markdown, no code fences, no explanation, nothing before or after the JSON.
-
-{
-  "name": "short food name",
-  "portion_size": 1,
-  "portion_unit": "serving",
-  "protein_g": 0,
-  "carbs_g": 0,
-  "fat_g": 0,
-  "calories": 0,
-  "notes": ""
-}
-
-Rules:
-- If multiple foods are described, combine into one entry
-- Round all numbers to 1 decimal place
-- If you see a nutrition label, use those exact numbers
-- If estimating from a photo, keep notes brief
-- Start your response with { and end with }
-
-Food to analyze: ${text || "See image"}`;
+  // Compact prompt — fewer output tokens needed = less chance of truncation
+  const prompt = `Analyze this food and return ONLY valid JSON, nothing else, no markdown.
+Format: {"name":"...","portion_size":1,"portion_unit":"serving","protein_g":0,"carbs_g":0,"fat_g":0,"calories":0,"notes":""}
+Rules: combine multiple foods into one entry, round to 1 decimal, use exact label numbers if visible, estimate if photo.
+Food: ${text || "See image"}`;
 
   const parts = [{ text: prompt }];
   if (imageBase64) {
@@ -71,7 +54,7 @@ Food to analyze: ${text || "See image"}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 2048 },
         }),
       }
     );
@@ -85,13 +68,37 @@ Food to analyze: ${text || "See image"}`;
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    // Robustly extract JSON — find first { and last }
+    // Extract JSON between first { and last }
     const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      return res.status(500).json({ error: "Failed to parse response", detail: `No JSON found in: ${raw.slice(0, 100)}` });
+    let end = raw.lastIndexOf("}");
+
+    if (start === -1) {
+      return res.status(500).json({ error: "Failed to parse response", detail: `No JSON in: ${raw.slice(0,120)}` });
     }
-    const jsonStr = raw.slice(start, end + 1);
+
+    // If truncated (no closing brace), attempt to repair by closing open fields
+    let jsonStr;
+    if (end === -1 || end <= start) {
+      // Try to salvage by extracting whatever fields parsed before truncation
+      let partial = raw.slice(start);
+      // Close any open string and the object
+      if (!partial.endsWith("}")) {
+        // Find last complete key:value pair by looking for last comma or last complete value
+        const lastComma = partial.lastIndexOf(",");
+        const lastColon = partial.lastIndexOf(":");
+        if (lastComma > 0) {
+          partial = partial.slice(0, lastComma) + "}";
+        } else if (lastColon > 0) {
+          // Incomplete value — drop the last field entirely
+          const secondLastComma = partial.lastIndexOf(",", lastColon);
+          partial = secondLastComma > 0 ? partial.slice(0, secondLastComma) + "}" : '{"name":"Unknown food","portion_size":1,"portion_unit":"serving","protein_g":0,"carbs_g":0,"fat_g":0,"calories":0,"notes":"Could not fully parse"}';
+        }
+      }
+      jsonStr = partial;
+    } else {
+      jsonStr = raw.slice(start, end + 1);
+    }
+
     const parsed = JSON.parse(jsonStr);
     return res.status(200).json({ ...parsed, _model: model });
 
