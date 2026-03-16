@@ -24,7 +24,23 @@ const hlbl={fontSize:9,fontWeight:600,color:C.mt,textTransform:"uppercase",lette
 // Data constants (unchanged)
 const ROTATION=["Lower A","Upper A","Rest","Lower B","Upper B","Arms & Delts","Rest"];
 const WEEK_TYPES=["Learning","Accumulation","Deload","Peak"];
-const GOALS=[{name:"Cut",cpl:12},{name:"Maintain",cpl:14},{name:"Lean Bulk",cpl:16},{name:"Bulk",cpl:18}];
+const GOALS=[
+  {name:"Cut",delta:-500,desc:"-500 cal"},
+  {name:"Maintain",delta:0,desc:"TDEE"},
+  {name:"Lean Bulk",delta:250,desc:"+250 cal"},
+  {name:"Bulk",delta:500,desc:"+500 cal"},
+];
+const ACTIVITY=[
+  {name:"Light",label:"1-2x/week",mult:1.375},
+  {name:"Moderate",label:"3-4x/week",mult:1.55},
+  {name:"Active",label:"5x/week",mult:1.725},
+  {name:"Very Active",label:"6-7x/week",mult:1.9},
+];
+function calcTDEE(weightLb,heightIn,age,actMult){
+  const wKg=weightLb*0.453592,hCm=heightIn*2.54;
+  const bmr=10*wKg+6.25*hCm-5*age+5; // Mifflin-St Jeor male
+  return Math.round(bmr*actMult);
+}
 const VOL_TARGETS={Quads:{min:10,max:20},Hamstrings:{min:10,max:16},Glutes:{min:6,max:16},Chest:{min:10,max:20},Back:{min:10,max:20},Shoulders:{min:8,max:16},Biceps:{min:6,max:14},Triceps:{min:6,max:14},Calves:{min:6,max:12}};
 
 // Calculations (unchanged)
@@ -297,7 +313,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
 }
 
 function Fuel({foods,setFoods,mt,setMt,online,onPC}){
-  const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const[calcW,setCalcW]=useState("205");const[calcG,setCalcG]=useState("Lean Bulk");const[calcP,setCalcP]=useState("0.85");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(new Date().toISOString().split("T")[0]);
+  const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const[calcW,setCalcW]=useState("205");const[calcH,setCalcH]=useState("71");const[calcAge,setCalcAge]=useState("30");const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState("Lean Bulk");const[calcP,setCalcP]=useState("1.0");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(new Date().toISOString().split("T")[0]);
   const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
@@ -308,7 +324,32 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   async function saveNewFood(){if(!nf.name||!nf.calories)return;const entry={name:nf.name,portion_size:parseFloat(nf.portion_size)||1,portion_unit:nf.portion_unit||"serving",protein_g:parseFloat(nf.protein_g)||0,carbs_g:parseFloat(nf.carbs_g)||0,fat_g:parseFloat(nf.fat_g)||0,calories:parseFloat(nf.calories)||0,category:nf.category};try{const{data}=await supabase.from("foods").insert(entry).select().single();if(data)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));}catch{addPending({type:"insert_food",data:entry});onPC();setFoods(p=>[...p,{...entry,id:`t_${Date.now()}`}].sort((a,b)=>a.name.localeCompare(b.name)));}setNf({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});setShowAdd(false);}
   const tot=log.reduce((a,m)=>({protein:a.protein+(m.protein||0)*m.portions,carbs:a.carbs+(m.carbs||0)*m.portions,fat:a.fat+(m.fat||0)*m.portions,calories:a.calories+(m.calories||0)*m.portions}),{protein:0,carbs:0,fat:0,calories:0});
   const flt=foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
-  function recalc(){const w=parseFloat(calcW)||205,goal=GOALS.find(g=>g.name===calcG)||GOALS[2],pr=parseFloat(calcP)||0.85,ft=parseFloat(calcF)||0.35;const cal=Math.round(w*goal.cpl),protein=Math.round(w*pr),fat=Math.round(w*ft),carbs=Math.round((cal-protein*4-fat*9)/4);setMt({protein,carbs,fat,calories:cal});cache.set("mt",{protein,carbs,fat,calories:cal});try{supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);}catch{}setShowCalc(false);}
+  function recalc(){
+    const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;
+    const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];
+    const goal=GOALS.find(g=>g.name===calcG)||GOALS[1];
+    const tdee=calcTDEE(w,h,age,act.mult);
+    const cal=Math.round(tdee+goal.delta);
+    const protein=Math.round(w*parseFloat(calcP)||w);
+    const fat=Math.round(w*(parseFloat(calcF)||0.35));
+    const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));
+    setMt({protein,carbs,fat,calories:cal});
+    cache.set("mt",{protein,carbs,fat,calories:cal});
+    try{supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);}catch{}
+    setShowCalc(false);
+  }
+  // Live preview for calculator
+  function previewMacros(overrideGoal){
+    const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;
+    const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];
+    const goal=GOALS.find(g=>g.name===(overrideGoal||calcG))||GOALS[1];
+    const tdee=calcTDEE(w,h,age,act.mult);
+    const cal=Math.round(tdee+goal.delta);
+    const protein=Math.round(w*(parseFloat(calcP)||1.0));
+    const fat=Math.round(w*(parseFloat(calcF)||0.35));
+    const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));
+    return{protein,carbs,fat,calories:cal,tdee};
+  }
 
   // AI food parser
   function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
@@ -330,17 +371,50 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
         <div><div style={{fontSize:20,fontWeight:700}}>Fuel</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>{mt.calories} cal target</div></div>
         <button onClick={()=>setShowCalc(!showCalc)} style={{...btnGhost,color:showCalc?C.ac:C.mt,borderColor:showCalc?`${C.ac}44`:C.bd,marginTop:2}}>Calculator</button>
       </div>
-      {showCalc&&(
+      {showCalc&&(()=>{
+        const prev=previewMacros();
+        return(
         <div style={{...card,marginBottom:14}}>
-          <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>{GOALS.map(g=><button key={g.name} onClick={()=>setCalcG(g.name)} style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${calcG===g.name?C.ac:C.bd}`,background:calcG===g.name?`${C.ac}15`:"transparent",color:calcG===g.name?C.ac:C.mt,fontSize:12,fontWeight:calcG===g.name?600:400,cursor:"pointer"}}>{g.name}</button>)}</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-            <div><div style={{...hlbl,marginBottom:4}}>Weight</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={inp}/></div>
-            <div><div style={{...hlbl,marginBottom:4}}>Pro/lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={inp}/></div>
-            <div><div style={{...hlbl,marginBottom:4}}>Fat/lb</div><input type="number" value={calcF} onChange={e=>setCalcF(e.target.value)} style={inp}/></div>
+          {/* Stats row */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
+            <div><div style={{...hlbl,marginBottom:4}}>Weight</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Height (in)</div><input type="number" value={calcH} onChange={e=>setCalcH(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Age</div><input type="number" value={calcAge} onChange={e=>setCalcAge(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Pro/lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={{...inp,fontSize:13}}/></div>
           </div>
-          <button onClick={recalc} style={btnP}>Update Targets</button>
+          {/* Activity */}
+          <div style={{...hlbl,marginBottom:6}}>Activity</div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
+            {ACTIVITY.map(a=><button key={a.name} onClick={()=>setCalcAct(a.name)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${calcAct===a.name?C.ac:C.bd}`,background:calcAct===a.name?`${C.ac}15`:"transparent",color:calcAct===a.name?C.ac:C.mt,fontSize:11,fontWeight:calcAct===a.name?600:400,cursor:"pointer"}}>{a.name}<span style={{fontSize:9,color:C.mt,display:"block"}}>{a.label}</span></button>)}
+          </div>
+          {/* TDEE display */}
+          <div style={{padding:"8px 12px",background:C.sf2,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:11,color:C.mt}}>TDEE (maintenance)</span>
+            <span style={{fontFamily:mono,fontSize:14,fontWeight:700,color:C.tx}}>{prev.tdee} cal</span>
+          </div>
+          {/* Goal buttons — instant preview */}
+          <div style={{...hlbl,marginBottom:6}}>Goal</div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
+            {GOALS.map(g=>{const p=previewMacros(g.name);return(
+              <button key={g.name} onClick={()=>setCalcG(g.name)} style={{flex:1,padding:"8px 6px",borderRadius:8,border:`1px solid ${calcG===g.name?C.ac:C.bd}`,background:calcG===g.name?`${C.ac}15`:"transparent",cursor:"pointer",textAlign:"center"}}>
+                <div style={{fontSize:12,fontWeight:calcG===g.name?700:400,color:calcG===g.name?C.ac:C.mt}}>{g.name}</div>
+                <div style={{fontSize:10,fontFamily:mono,color:calcG===g.name?C.ac:C.mt,marginTop:2}}>{p.calories} cal</div>
+              </button>
+            );})}
+          </div>
+          {/* Live macro preview */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>
+            {[{l:"Protein",v:prev.protein,u:"g",c:C.gn},{l:"Carbs",v:prev.carbs,u:"g",c:C.bl},{l:"Fat",v:prev.fat,u:"g",c:C.am},{l:"Calories",v:prev.calories,u:"",c:C.ac}].map(m=>(
+              <div key={m.l} style={{background:C.sf2,borderRadius:8,padding:"8px 4px",textAlign:"center"}}>
+                <div style={{fontSize:16,fontWeight:700,fontFamily:mono,color:m.c}}>{m.v}</div>
+                <div style={{fontSize:8,color:C.mt,marginTop:2}}>{m.l}</div>
+              </div>
+            ))}
+          </div>
+          <button onClick={recalc} style={btnP}>Set as targets</button>
         </div>
-      )}
+        );
+      })()}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:16}}>
         {[{l:"Pro",v:Math.round(tot.protein),t:mt.protein,u:"g",c:C.gn},{l:"Carb",v:Math.round(tot.carbs),t:mt.carbs,u:"g",c:C.bl},{l:"Fat",v:Math.round(tot.fat),t:mt.fat,u:"g",c:C.am},{l:"Cal",v:Math.round(tot.calories),t:mt.calories,u:"",c:C.ac}].map(m=>{
           const p=Math.round((m.v/m.t)*100);
