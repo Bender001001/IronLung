@@ -133,19 +133,22 @@ export default function App(){
 import Model from 'react-body-highlighter';
 
 // Maps our Supabase primary_muscle values to library slugs + view side
+// Library slug reference:
+// FRONT: chest, biceps, abs, quadriceps, adductor, abductors, front-deltoids, obliques, forearm, neck, head
+// BACK:  upper-back, lower-back, trapezius, triceps, hamstring, gluteal, calves, back-deltoids
 const MUSCLE_MAP = {
-  // Back — library: upper-back=traps/rhomboids, lower-back=lumbar, trapezius=neck/traps
+  // Back
   "Lats":              { slugs:["upper-back","lower-back"], side:"back" },
   "Mid Back":          { slugs:["upper-back"], side:"back" },
-  "Back":              { slugs:["upper-back","lower-back","trapezius"], side:"back" },
+  "Back":              { slugs:["trapezius","upper-back","lower-back"], side:"back" },
   "Upper Traps":       { slugs:["trapezius"], side:"back" },
-  // Chest
+  // Chest — library has no upper/lower split, both show full pec
   "Chest":             { slugs:["chest"], side:"front" },
   "Upper Chest":       { slugs:["chest"], side:"front" },
   // Shoulders
-  "Side Delts":        { slugs:["front-deltoids"], side:"front" },
+  "Side Delts":        { slugs:["front-deltoids"], side:"front" },  // no lateral slug exists
   "Rear Delts":        { slugs:["back-deltoids"], side:"back" },
-  "Shoulders":         { slugs:["front-deltoids","back-deltoids"], side:"front" },
+  "Shoulders":         { slugs:["front-deltoids"], side:"front" },
   // Arms
   "Biceps":            { slugs:["biceps"], side:"front" },
   "Triceps":           { slugs:["triceps"], side:"back" },
