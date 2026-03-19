@@ -134,10 +134,10 @@ import Model from 'react-body-highlighter';
 
 // Maps our Supabase primary_muscle values to library slugs + view side
 const MUSCLE_MAP = {
-  // Back
-  "Lats":              { slugs:["upper-back"], side:"back" },
-  "Mid Back":          { slugs:["lower-back"], side:"back" },
-  "Back":              { slugs:["upper-back","lower-back"], side:"back" },
+  // Back — library: upper-back=traps/rhomboids, lower-back=lumbar, trapezius=neck/traps
+  "Lats":              { slugs:["upper-back","lower-back"], side:"back" },
+  "Mid Back":          { slugs:["upper-back"], side:"back" },
+  "Back":              { slugs:["upper-back","lower-back","trapezius"], side:"back" },
   "Upper Traps":       { slugs:["trapezius"], side:"back" },
   // Chest
   "Chest":             { slugs:["chest"], side:"front" },
