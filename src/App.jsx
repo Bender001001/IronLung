@@ -129,9 +129,9 @@ export default function App(){
 }
 
 function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online}){
-  const[showCfg,setShowCfg]=useState(false);const[wc,setWc]=useState(null);const[summary,setSummary]=useState(null);const[showSum,setShowSum]=useState(false);const[dismissedDL,setDismissedDL]=useState(false);
+  const[showCfg,setShowCfg]=useState(false);const[wc,setWc]=useState(null);const[summary,setSummary]=useState(null);const[showSum,setShowSum]=useState(false);const[dismissedDL,setDismissedDL]=useState(false);const[completedDays,setCompletedDays]=useState({});
   useEffect(()=>{lc();loadSummary();},[week]);
-  async function lc(){if(!online){setWc(null);return;}try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(reps)").eq("week_number",week);if(!data?.length){setWc(null);return;}const tp=days.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);let dn=0;data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0)dn++;}));setWc(tp>0?Math.round((dn/tp)*100):0);}catch{setWc(null);}}
+  async function lc(){if(!online){setWc(null);return;}try{const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(reps)").eq("week_number",week);if(!data?.length){setWc(null);setCompletedDays({});return;}const tp=days.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);let dn=0;const cd={};data.forEach(s=>{let sets=0;s.workout_sets.forEach(ws=>{if(ws.reps>0){dn++;sets++;}});if(sets>0)cd[s.training_day_id]=true;});setCompletedDays(cd);setWc(tp>0?Math.round((dn/tp)*100):0);}catch{setWc(null);}}
   async function loadSummary(){if(!online)return;try{const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle))").eq("week_number",week);if(!data?.length){setSummary(null);return;}
     let totalSets=0,completedSets=0,prCount=0;const muscles={};
     const{data:prevData}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,exercises(name))").eq("week_number",week-1);
@@ -209,11 +209,12 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         {ROTATION.map((dn,i)=>{
           if(dn==="Rest")return<div key={`r${i}`} style={{padding:"9px 16px",background:C.sf2,borderRadius:10,border:`1px solid ${C.bd}`,opacity:0.35,display:"flex",alignItems:"center",gap:14}}><div style={{fontFamily:mono,fontSize:11,color:C.mt,width:20,textAlign:"center"}}>{i+1}</div><span style={{fontSize:11,color:C.mt}}>Rest</span></div>;
           const day=days.find(d=>d.name===dn);if(!day)return null;
+          const isDone=completedDays[day.id];
           return(
-            <button key={dn} onClick={()=>onSelect(day)} style={{padding:"14px 16px",background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14,width:"100%"}}>
-              <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:C.mt,width:20,textAlign:"center",flexShrink:0}}>{i+1}</div>
-              <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,color:C.tx}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:2}}>{day.focus}</div></div>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2.5" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
+            <button key={dn} onClick={()=>onSelect(day)} style={{padding:"14px 16px",background:isDone?`${C.gn}08`:C.sf,borderRadius:12,border:`1px solid ${isDone?C.gn+"30":C.bd}`,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14,width:"100%"}}>
+              <div style={{fontFamily:mono,fontSize:12,fontWeight:700,color:isDone?C.gn:C.mt,width:20,textAlign:"center",flexShrink:0}}>{isDone?"✓":i+1}</div>
+              <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,color:isDone?C.gn:C.tx}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:2}}>{day.focus}</div></div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isDone?C.gn:C.mt} strokeWidth="2.5" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
             </button>
           );
         })}
@@ -289,6 +290,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
                       </div>
                     </div>
                   )}
+                  {/* Copy all sets from last week */}
+                  {pg&&<button onClick={()=>{fill(ex.id,es,pg.w);}} style={{width:"100%",padding:"7px",marginBottom:8,background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:11,cursor:"pointer"}}>↩ Copy last week ({pg.w}lb × {es} sets)</button>}
                   <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
                     <button onClick={()=>fill(ex.id,es,todayWeight||0)} style={{padding:"7px 12px",background:pg?.up?`${C.gn}10`:pg?.deload?`${C.am}10`:C.sf2,border:`1px solid ${pg?.up?`${C.gn}33`:pg?.deload?`${C.am}33`:C.bd}`,borderRadius:8,color:pg?.up?C.gn:pg?.deload?C.am:C.mt,fontSize:12,fontWeight:600,cursor:"pointer"}}>Fill {todayWeight||0}lb</button>
                     {pg?.up&&<button onClick={()=>fill(ex.id,es,pg.w)} style={{padding:"7px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer"}}>Keep {pg.w}lb</button>}
@@ -315,7 +318,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
 
 function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const savedMt=cache.get("mt");const[calcW,setCalcW]=useState(String(savedMt?.bw||"205"));const[calcH,setCalcH]=useState("71");const[calcAge,setCalcAge]=useState("30");const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(savedMt?.goalName||"Lean Bulk");const[calcP,setCalcP]=useState("1.0");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
-  const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);
+  const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
   async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
@@ -353,6 +356,46 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   }
 
   // AI food parser
+  // Barcode scanner using device camera + ZXing
+  async function startScan(){
+    setShowScan(true);setScanStatus("Starting camera...");
+    try{
+      const ZXing=await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm");
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      streamRef.current=stream;
+      if(scanRef.current){scanRef.current.srcObject=stream;scanRef.current.play();}
+      setScanStatus("Point camera at barcode");
+      const reader=new ZXing.BrowserMultiFormatReader();
+      reader.decodeFromStream(stream,scanRef.current,async(result,err)=>{
+        if(result){
+          const barcode=result.getText();
+          stopScan();
+          setScanStatus("Looking up...");setShowScan(true);
+          try{
+            const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+            const data=await res.json();
+            if(data.status===1&&data.product){
+              const p=data.product;const n=p.nutriments;
+              const per=parseFloat(p.serving_size)||100;
+              setAiResult({
+                name:p.product_name||p.generic_name||"Scanned food",
+                portion_size:parseFloat(p.serving_quantity)||1,
+                portion_unit:p.serving_size||"serving",
+                protein_g:parseFloat(n.proteins_serving||n.proteins||0),
+                carbs_g:parseFloat(n.carbohydrates_serving||n.carbohydrates||0),
+                fat_g:parseFloat(n.fat_serving||n.fat||0),
+                calories:parseFloat(n["energy-kcal_serving"]||n["energy-kcal"]||0),
+                notes:"From barcode scan"
+              });
+              setShowAI(true);setShowScan(false);setScanStatus("Point camera at barcode");
+            }else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
+          }catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
+        }
+      });
+    }catch(e){setScanStatus(`Camera error: ${e.message}`);setTimeout(()=>setShowScan(false),2000);}
+  }
+  function stopScan(){if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setShowScan(false);}
+
   function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
   async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);
     try{const res=await fetch("/api/ai-parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:aiText||undefined,imageBase64:aiImg||undefined,mimeType:aiImgMime})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);setAiResult({...data,protein_g:parseFloat(data.protein_g)||0,carbs_g:parseFloat(data.carbs_g)||0,fat_g:parseFloat(data.fat_g)||0,calories:parseFloat(data.calories)||0,portion_size:parseFloat(data.portion_size)||1});}
@@ -438,6 +481,19 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{(showRecent?recentFoods:recentFoods.slice(0,6)).map(f=><button key={f.id} onClick={()=>add(f,f.lastPortions||1)} style={{padding:"7px 10px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:8,color:C.tx,fontSize:11,cursor:"pointer",display:"flex",gap:5,alignItems:"center"}}><span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name.length>18?f.name.slice(0,18)+"…":f.name}</span><span style={{fontFamily:mono,fontSize:10,color:C.gn,flexShrink:0}}>{f.protein_g}p</span></button>)}</div>
         </div>
       )}
+      {/* Barcode scan button */}
+      <button onClick={()=>{if(showScan)stopScan();else startScan();setShowAI(false);}} style={{...btnGhost,width:"100%",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"10px",borderColor:showScan?`${C.ac}44`:C.bd,color:showScan?C.ac:C.mt}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 9V6a2 2 0 012-2h2M15 4h2a2 2 0 012 2v3M3 15v3a2 2 0 002 2h2M15 20h2a2 2 0 002-2v-3M7 9h10v6H7z"/></svg>
+        {showScan?"Close scanner":"Scan barcode"}
+      </button>
+      {showScan&&(
+        <div style={{...card,marginBottom:12,textAlign:"center"}}>
+          <video ref={scanRef} style={{width:"100%",borderRadius:8,background:C.sf2,maxHeight:220,objectFit:"cover"}} playsInline muted/>
+          <div style={{fontSize:11,color:C.mt,marginTop:8}}>{scanStatus}</div>
+          <button onClick={stopScan} style={{...btnGhost,marginTop:8,padding:"6px 16px"}}>Cancel</button>
+        </div>
+      )}
+
       {/* AI Log button */}
       <button onClick={()=>{setShowAI(!showAI);setShowS(false);setShowAdd(false);setAiResult(null);setAiError(null);}} style={{...btnP,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:showAI?C.sf2:C.ac,color:showAI?C.mt:C.bg,border:showAI?`1px solid ${C.bd}`:"none"}}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={showAI?C.mt:C.bg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -653,6 +709,7 @@ function Stats({meas,week,online}){
   async function loadMuscleTrend(){try{const{data}=await supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0);if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
 
   const wd=meas.filter(m=>m.bodyweight_lb);
+  const bfData=meas.filter(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return bf!==null;}).map((m,i)=>{const bf=parseFloat(m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null));return{x:i+1,y:bf};});
   const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
   const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])];
   const volD=allM.map(m=>({muscle:m,actual:vol[m]||0,min:VOL_TARGETS[m]?.min||0,max:VOL_TARGETS[m]?.max||20})).sort((a,b)=>b.actual-a.actual);
@@ -663,7 +720,7 @@ function Stats({meas,week,online}){
   const activeMuscle=selMuscle&&muscleTrend[selMuscle]?selMuscle:muscleKeys[0]||null;
 
   // Muscle colors for variety
-  const muscleColors={Chest:C.ac,Back:C.bl,Quads:C.gn,Hamstrings:"#5bc4a8",Glutes:"#a07aff",Shoulders:C.am,Biceps:"#ff7aaa",Triceps:"#ff9f5b",Calves:C.mt,Glutes:C.rd};
+  const muscleColors={Chest:C.ac,Back:C.bl,Quads:C.gn,Hamstrings:"#5bc4a8",Glutes:"#a07aff",Shoulders:C.am,Biceps:"#ff7aaa",Triceps:"#ff9f5b",Calves:C.mt,Adductors:"#e07aff",Abductors:"#ff9f5b"};
   const getMC=m=>muscleColors[m]||C.ac;
 
   return(
@@ -688,7 +745,7 @@ function Stats({meas,week,online}){
 
       {/* Tab pills */}
       <div style={{display:"flex",gap:4,marginBottom:16,background:C.sf2,borderRadius:10,padding:4}}>
-        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"},{id:"muscle",l:"Muscle"}].map(v=>(
+        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"},{id:"bf",l:"Body Fat"},{id:"muscle",l:"Muscle"}].map(v=>(
           <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:11,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>
             {v.l}
           </button>
@@ -736,6 +793,21 @@ function Stats({meas,week,online}){
             </div>
           </div>
         ):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet</div>
+      )}
+
+      {/* Body fat trend */}
+      {view==="bf"&&(
+        bfData.length>=2?(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
+              <div style={hlbl}>Body fat trend</div>
+              <div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bfData[0].y}% → <span style={{color:C.am,fontWeight:600}}>{bfData[bfData.length-1].y}%</span></div>
+            </div>
+            <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.am}22`,padding:"14px 10px 6px"}}>
+              <LineChart points={bfData} color={C.am} height={100}/>
+            </div>
+          </div>
+        ):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet — log waist + neck measurements in Body tab</div>
       )}
 
       {/* Muscle strength trend */}
