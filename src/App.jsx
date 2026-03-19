@@ -166,26 +166,39 @@ function MuscleDiagram({muscle, color}){
   if(!info) return null;
   const col = color || C.ac;
 
-  // frequency:1 maps to highlightedColors[0] = col
-  const data = [{
-    name: muscle,
-    muscles: info.slugs,
-    frequency: 1,
-  }];
+  const isFront = info.side === "front";
+  const isBack  = info.side === "back";
+
+  // Pass highlighted data only to the correct side, empty to the other
+  const activeData = [{ name: muscle, muscles: info.slugs, frequency: 1 }];
+  const emptyData  = [];
 
   return(
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
       <div style={{fontSize:9,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
         {muscle}
       </div>
-      <div style={{width:160}}>
-        <Model
-          data={data}
-          style={{width:"100%"}}
-          highlightedColors={[col]}
-          bodyColor="#45454f"
-          scale={0.9}
-        />
+      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+        {/* Front view */}
+        <div style={{width:70,opacity:isFront?1:0.35}}>
+          <Model
+            data={isFront?activeData:emptyData}
+            style={{width:"100%"}}
+            highlightedColors={[col]}
+            bodyColor="#45454f"
+            type="anterior"
+          />
+        </div>
+        {/* Back view */}
+        <div style={{width:70,opacity:isBack?1:0.35}}>
+          <Model
+            data={isBack?activeData:emptyData}
+            style={{width:"100%"}}
+            highlightedColors={[col]}
+            bodyColor="#45454f"
+            type="posterior"
+          />
+        </div>
       </div>
     </div>
   );
