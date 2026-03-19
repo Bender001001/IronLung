@@ -137,9 +137,9 @@ import Model from 'react-body-highlighter';
 // FRONT: chest, biceps, abs, quadriceps, adductor, abductors, front-deltoids, obliques, forearm, neck, head
 // BACK:  upper-back, lower-back, trapezius, triceps, hamstring, gluteal, calves, back-deltoids
 const MUSCLE_MAP = {
-  // Back
-  "Lats":              { slugs:["upper-back","lower-back"], side:"back" },
-  "Mid Back":          { slugs:["upper-back"], side:"back" },
+  // Back — library slugs: trapezius=neck/traps, upper-back=lat/rhomboid area, lower-back=lumbar
+  "Lats":              { slugs:["upper-back"], side:"back" },
+  "Mid Back":          { slugs:["trapezius","upper-back"], side:"back" },
   "Back":              { slugs:["trapezius","upper-back","lower-back"], side:"back" },
   "Upper Traps":       { slugs:["trapezius"], side:"back" },
   // Chest — library has no upper/lower split, both show full pec
