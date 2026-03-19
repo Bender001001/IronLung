@@ -129,224 +129,62 @@ export default function App(){
 }
 
 
-// ── Anatomical muscle diagram ────────────────────────────────────────────────
-// Athletic V-taper figure. Upper/lower half split for clarity.
-// ViewBox 0 0 120 160 for upper, 0 0 120 160 for lower.
-// Muscle paths are cut to match EXACTLY the silhouette they sit inside.
+// ── Muscle diagram via react-body-highlighter ────────────────────────────────
+import Model from 'react-body-highlighter';
 
-// Which muscles show upper vs lower half
-const UPPER_MUSCLES = new Set(["Chest","Upper Chest","Side Delts","Rear Delts","Shoulders","Lats","Mid Back","Back","Biceps","Triceps","Triceps Long Head","Abs"]);
-const LOWER_MUSCLES = new Set(["Quads","Hamstrings","Glutes","Calves","Adductors","Abductors"]);
+// Maps our Supabase primary_muscle values to library slugs + view side
+const MUSCLE_MAP = {
+  // Back
+  "Lats":              { slugs:["upper-back"], side:"back" },
+  "Mid Back":          { slugs:["lower-back"], side:"back" },
+  "Back":              { slugs:["upper-back","lower-back"], side:"back" },
+  "Upper Traps":       { slugs:["trapezius"], side:"back" },
+  // Chest
+  "Chest":             { slugs:["chest"], side:"front" },
+  "Upper Chest":       { slugs:["chest"], side:"front" },
+  // Shoulders
+  "Side Delts":        { slugs:["front-deltoids"], side:"front" },
+  "Rear Delts":        { slugs:["back-deltoids"], side:"back" },
+  "Shoulders":         { slugs:["front-deltoids","back-deltoids"], side:"front" },
+  // Arms
+  "Biceps":            { slugs:["biceps"], side:"front" },
+  "Triceps":           { slugs:["triceps"], side:"back" },
+  "Triceps Long Head": { slugs:["triceps"], side:"back" },
+  // Core
+  "Abs":               { slugs:["abs"], side:"front" },
+  // Legs
+  "Quads":             { slugs:["quadriceps"], side:"front" },
+  "Hamstrings":        { slugs:["hamstring"], side:"back" },
+  "Glutes":            { slugs:["gluteal"], side:"back" },
+  "Calves":            { slugs:["calves"], side:"back" },
+  "Adductors":         { slugs:["adductor"], side:"front" },
+  "Abductors":         { slugs:["abductors"], side:"front" },
+};
 
-// ── UPPER BODY SVG ────────────────────────────────────────────────────────
-// 120 wide x 160 tall. Athletic proportions:
-// - Head small at top
-// - Shoulders very wide (V taper)
-// - Chest pronounced
-// - Waist narrow
-// - Visible muscle separation
-
-function UpperBody({highlight, color}){
-  const c = color || "#7c8aff";
-  const dim = "#2c2c34";  // separation lines
-  const skin = "#27272e"; // fill
-  const border = "#38383f";
-
-  return(
-    <svg viewBox="0 0 120 160" style={{width:96,height:128,display:"block"}} xmlns="http://www.w3.org/2000/svg">
-      {/* ── BASE SHAPES (painted first) ── */}
-
-      {/* Left lat — wide wing */}
-      <path d="M 8,42 C 4,48 3,62 5,76 C 7,88 12,96 22,98 C 30,99 38,95 40,86 L 42,42 Z"
-        fill={highlight==="Lats"||highlight==="Back"?c:skin} fillOpacity={highlight==="Lats"||highlight==="Back"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right lat */}
-      <path d="M 112,42 C 116,48 117,62 115,76 C 113,88 108,96 98,98 C 90,99 82,95 80,86 L 78,42 Z"
-        fill={highlight==="Lats"||highlight==="Back"?c:skin} fillOpacity={highlight==="Lats"||highlight==="Back"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left bicep/upper arm front */}
-      <path d="M 6,44 C 2,50 1,64 3,78 C 5,90 10,96 16,94 L 18,68 C 17,54 13,44 6,44 Z"
-        fill={highlight==="Biceps"?c:skin} fillOpacity={highlight==="Biceps"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right bicep */}
-      <path d="M 114,44 C 118,50 119,64 117,78 C 115,90 110,96 104,94 L 102,68 C 103,54 107,44 114,44 Z"
-        fill={highlight==="Biceps"?c:skin} fillOpacity={highlight==="Biceps"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left tricep (back of arm) */}
-      <path d="M 5,44 C 1,50 0,64 2,78 C 4,90 9,96 15,94 L 17,68 C 16,54 12,44 5,44 Z"
-        fill={highlight==="Triceps"||highlight==="Triceps Long Head"?c:skin} fillOpacity={highlight==="Triceps"||highlight==="Triceps Long Head"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right tricep */}
-      <path d="M 115,44 C 119,50 120,64 118,78 C 116,90 111,96 105,94 L 103,68 C 104,54 108,44 115,44 Z"
-        fill={highlight==="Triceps"||highlight==="Triceps Long Head"?c:skin} fillOpacity={highlight==="Triceps"||highlight==="Triceps Long Head"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left forearm */}
-      <path d="M 4,93 C 1,99 1,113 3,124 C 5,132 10,136 15,134 C 20,132 21,122 19,110 C 17,100 10,91 4,93 Z"
-        fill={skin} stroke={border} strokeWidth="0.8"/>
-      {/* Right forearm */}
-      <path d="M 116,93 C 119,99 119,113 117,124 C 115,132 110,136 105,134 C 100,132 99,122 101,110 C 103,100 110,91 116,93 Z"
-        fill={skin} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left pec */}
-      <path d="M 18,44 C 15,50 14,62 16,74 C 18,84 24,90 34,90 C 42,90 48,84 50,76 L 50,44 Z"
-        fill={highlight==="Chest"||highlight==="Upper Chest"?c:skin} fillOpacity={highlight==="Chest"||highlight==="Upper Chest"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right pec */}
-      <path d="M 102,44 C 105,50 106,62 104,74 C 102,84 96,90 86,90 C 78,90 72,84 70,76 L 70,44 Z"
-        fill={highlight==="Chest"||highlight==="Upper Chest"?c:skin} fillOpacity={highlight==="Chest"||highlight==="Upper Chest"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left shoulder cap */}
-      <path d="M 8,34 C 3,38 1,48 3,58 C 5,66 10,70 16,68 C 20,66 22,58 20,48 C 18,40 13,32 8,34 Z"
-        fill={highlight==="Side Delts"||highlight==="Rear Delts"||highlight==="Shoulders"?c:skin} fillOpacity={highlight==="Side Delts"||highlight==="Rear Delts"||highlight==="Shoulders"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right shoulder cap */}
-      <path d="M 112,34 C 117,38 119,48 117,58 C 115,66 110,70 104,68 C 100,66 98,58 100,48 C 102,40 107,32 112,34 Z"
-        fill={highlight==="Side Delts"||highlight==="Rear Delts"||highlight==="Shoulders"?c:skin} fillOpacity={highlight==="Side Delts"||highlight==="Rear Delts"||highlight==="Shoulders"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left mid back / rhomboid */}
-      <path d="M 30,46 C 27,52 26,62 28,72 C 30,80 36,84 42,82 C 46,80 50,74 50,64 L 50,46 Z"
-        fill={highlight==="Mid Back"||highlight==="Back"?c:skin} fillOpacity={highlight==="Mid Back"||highlight==="Back"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right mid back */}
-      <path d="M 90,46 C 93,52 94,62 92,72 C 90,80 84,84 78,82 C 74,80 70,74 70,64 L 70,46 Z"
-        fill={highlight==="Mid Back"||highlight==="Back"?c:skin} fillOpacity={highlight==="Mid Back"||highlight==="Back"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Abs */}
-      <path d="M 38,92 C 35,98 34,108 36,118 C 38,126 44,130 60,130 C 76,130 82,126 84,118 C 86,108 85,98 82,92 Z"
-        fill={highlight==="Abs"?c:skin} fillOpacity={highlight==="Abs"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* ── TORSO OUTLINE on top (connects everything) ── */}
-      {/* Traps / upper back */}
-      <path d="M 38,26 C 32,28 24,32 18,38 L 50,40 L 70,40 L 102,38 C 96,32 88,28 82,26 C 74,24 26,24 38,26 Z"
-        fill={highlight==="Back"?c:skin} fillOpacity={highlight==="Back"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Waist block */}
-      <path d="M 40,128 L 80,128 L 82,148 C 82,152 72,155 60,155 C 48,155 38,152 38,148 Z"
-        fill={skin} stroke={border} strokeWidth="0.8"/>
-
-      {/* ── MUSCLE DEFINITION LINES (dark, drawn last) ── */}
-      {/* Pec separation line */}
-      <line x1="50" y1="44" x2="50" y2="90" stroke={dim} strokeWidth="1.2"/>
-      {/* Pec lower arc left */}
-      <path d="M 16,74 C 24,88 40,92 50,90" fill="none" stroke={dim} strokeWidth="1"/>
-      {/* Pec lower arc right */}
-      <path d="M 104,74 C 96,88 80,92 70,90" fill="none" stroke={dim} strokeWidth="1"/>
-      {/* Left shoulder/pec seam */}
-      <path d="M 18,44 C 16,52 15,60 16,68" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Right shoulder/pec seam */}
-      <path d="M 102,44 C 104,52 105,60 104,68" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Lat/mid-back separation left */}
-      <path d="M 42,46 C 40,62 40,78 40,88" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Lat/mid-back separation right */}
-      <path d="M 78,46 C 80,62 80,78 80,88" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Abs horizontal lines */}
-      <line x1="38" y1="103" x2="82" y2="103" stroke={dim} strokeWidth="0.8"/>
-      <line x1="38" y1="115" x2="82" y2="115" stroke={dim} strokeWidth="0.8"/>
-      {/* Abs vertical line */}
-      <line x1="60" y1="92" x2="60" y2="128" stroke={dim} strokeWidth="0.8"/>
-
-      {/* ── HEAD ── */}
-      <ellipse cx="60" cy="14" rx="11" ry="13" fill={skin} stroke={border} strokeWidth="0.8"/>
-      {/* Neck */}
-      <rect x="55" y="26" width="10" height="12" rx="4" fill={skin} stroke={border} strokeWidth="0.8"/>
-    </svg>
-  );
-}
-
-// ── LOWER BODY SVG ────────────────────────────────────────────────────────
-// 120 wide x 160 tall. Athletic legs — quads prominent, calves defined.
-
-function LowerBody({highlight, color}){
-  const c = color || "#7c8aff";
-  const skin = "#27272e";
-  const border = "#38383f";
-  const dim = "#2c2c34";
-
-  return(
-    <svg viewBox="0 0 120 160" style={{width:96,height:128,display:"block"}} xmlns="http://www.w3.org/2000/svg">
-      {/* Glutes / hip block */}
-      <path d="M 16,8 C 12,14 10,26 12,38 C 14,48 22,54 36,52 C 46,51 52,44 54,34 L 56,8 Z"
-        fill={highlight==="Glutes"?c:skin} fillOpacity={highlight==="Glutes"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      <path d="M 104,8 C 108,14 110,26 108,38 C 106,48 98,54 84,52 C 74,51 68,44 66,34 L 64,8 Z"
-        fill={highlight==="Glutes"?c:skin} fillOpacity={highlight==="Glutes"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left quad */}
-      <path d="M 12,46 C 8,54 7,74 9,94 C 11,110 18,118 30,116 C 42,114 47,102 48,84 L 50,46 Z"
-        fill={highlight==="Quads"?c:skin} fillOpacity={highlight==="Quads"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right quad */}
-      <path d="M 108,46 C 112,54 113,74 111,94 C 109,110 102,118 90,116 C 78,114 73,102 72,84 L 70,46 Z"
-        fill={highlight==="Quads"?c:skin} fillOpacity={highlight==="Quads"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left hamstring (back of thigh — same shape, back view) */}
-      <path d="M 14,46 C 10,54 9,74 11,94 C 13,110 20,118 32,116 C 44,114 49,102 50,84 L 52,46 Z"
-        fill={highlight==="Hamstrings"?c:skin} fillOpacity={highlight==="Hamstrings"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right hamstring */}
-      <path d="M 106,46 C 110,54 111,74 109,94 C 107,110 100,118 88,116 C 76,114 71,102 70,84 L 68,46 Z"
-        fill={highlight==="Hamstrings"?c:skin} fillOpacity={highlight==="Hamstrings"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Adductors — inner thigh */}
-      <path d="M 42,48 C 39,56 38,74 40,90 C 42,102 48,108 56,107 C 64,107 70,102 72,90 C 74,74 73,56 70,48 Z"
-        fill={highlight==="Adductors"?c:skin} fillOpacity={highlight==="Adductors"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Abductors — outer thigh */}
-      <path d="M 10,44 C 6,50 5,64 7,76 C 9,86 15,92 22,89 C 28,86 30,76 28,64 C 26,54 18,42 10,44 Z"
-        fill={highlight==="Abductors"?c:skin} fillOpacity={highlight==="Abductors"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      <path d="M 110,44 C 114,50 115,64 113,76 C 111,86 105,92 98,89 C 92,86 90,76 92,64 C 94,54 102,42 110,44 Z"
-        fill={highlight==="Abductors"?c:skin} fillOpacity={highlight==="Abductors"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left knee */}
-      <ellipse cx="31" cy="119" rx="18" ry="10" fill={skin} stroke={border} strokeWidth="0.8"/>
-      {/* Right knee */}
-      <ellipse cx="89" cy="119" rx="18" ry="10" fill={skin} stroke={border} strokeWidth="0.8"/>
-
-      {/* Left calf */}
-      <path d="M 16,127 C 12,133 12,148 14,158 C 16,165 22,168 30,166 C 38,164 40,154 38,142 C 36,132 27,125 16,127 Z"
-        fill={highlight==="Calves"?c:skin} fillOpacity={highlight==="Calves"?0.9:1} stroke={border} strokeWidth="0.8"/>
-      {/* Right calf */}
-      <path d="M 104,127 C 108,133 108,148 106,158 C 104,165 98,168 90,166 C 82,164 80,154 82,142 C 84,132 93,125 104,127 Z"
-        fill={highlight==="Calves"?c:skin} fillOpacity={highlight==="Calves"?0.9:1} stroke={border} strokeWidth="0.8"/>
-
-      {/* ── Quad definition lines ── */}
-      {/* Teardrop / VMO left */}
-      <path d="M 30,96 C 36,102 44,106 50,104" fill="none" stroke={dim} strokeWidth="0.9"/>
-      {/* VMO right */}
-      <path d="M 90,96 C 84,102 76,106 70,104" fill="none" stroke={dim} strokeWidth="0.9"/>
-      {/* Lateral quad line left */}
-      <path d="M 14,56 C 13,72 12,88 14,100" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Lateral quad line right */}
-      <path d="M 106,56 C 107,72 108,88 106,100" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Inner thigh separation left */}
-      <path d="M 44,50 C 43,66 43,82 44,96" fill="none" stroke={dim} strokeWidth="0.8"/>
-      {/* Inner thigh separation right */}
-      <path d="M 76,50 C 77,66 77,82 76,96" fill="none" stroke={dim} strokeWidth="0.8"/>
-
-      {/* Hip/waist band */}
-      <path d="M 10,6 L 110,6 L 112,20 C 112,24 88,28 60,28 C 32,28 8,24 8,20 Z"
-        fill={skin} stroke={border} strokeWidth="0.8"/>
-    </svg>
-  );
-}
-
-// Main component — picks upper or lower based on muscle group
 function MuscleDiagram({muscle, color}){
+  const info = MUSCLE_MAP[muscle];
+  if(!info) return null;
   const col = color || C.ac;
-  const isLower = LOWER_MUSCLES.has(muscle);
-  const isUpper = UPPER_MUSCLES.has(muscle);
-  if(!isLower && !isUpper) return null;
 
-  // Human-readable label
-  const labels = {
-    "Lats":"Lats","Mid Back":"Mid Back","Back":"Back","Chest":"Chest",
-    "Upper Chest":"Upper Chest","Side Delts":"Side Delts","Rear Delts":"Rear Delts",
-    "Shoulders":"Shoulders","Biceps":"Biceps","Triceps":"Triceps",
-    "Triceps Long Head":"Triceps (Long Head)","Abs":"Abs",
-    "Quads":"Quads","Hamstrings":"Hamstrings","Glutes":"Glutes",
-    "Calves":"Calves","Adductors":"Adductors","Abductors":"Abductors",
-  };
+  const data = info.slugs.map(slug => ({
+    name: muscle,
+    muscles: [slug],
+  }));
 
   return(
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
       <div style={{fontSize:9,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
-        {labels[muscle]||muscle}
+        {muscle}
       </div>
-      {isUpper
-        ? <UpperBody highlight={muscle} color={col}/>
-        : <LowerBody highlight={muscle} color={col}/>
-      }
+      <div style={{width:80,filter:`drop-shadow(0 0 4px ${col}44)`}}>
+        <Model
+          data={data}
+          style={{width:"100%"}}
+          highlightedColors={[col]}
+          bodyColor={C.sf2}
+          side={info.side}
+        />
+      </div>
     </div>
   );
 }
