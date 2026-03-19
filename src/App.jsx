@@ -166,23 +166,23 @@ function MuscleDiagram({muscle, color}){
   if(!info) return null;
   const col = color || C.ac;
 
-  const data = info.slugs.map(slug => ({
+  // Each slug needs its own data entry for the library to highlight it
+  const data = [{
     name: muscle,
-    muscles: [slug],
-  }));
+    muscles: info.slugs,
+  }];
 
   return(
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
       <div style={{fontSize:9,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
         {muscle}
       </div>
-      <div style={{width:80,filter:`drop-shadow(0 0 4px ${col}44)`}}>
+      <div style={{width:120}}>
         <Model
           data={data}
           style={{width:"100%"}}
           highlightedColors={[col]}
-          bodyColor={C.sf2}
-          side={info.side}
+          bodyColor="#3a3a45"
         />
       </div>
     </div>
