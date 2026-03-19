@@ -12,8 +12,8 @@ const C={bg:"#111113",sf:"#19191d",sf2:"#222228",sf3:"#27272e",bd:"#2c2c34",bd2:
 const mono="'JetBrains Mono',monospace",sans="'DM Sans',sans-serif";
 
 // Shared style primitives
-const inp={width:"100%",padding:"10px 8px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.tx,fontSize:15,fontFamily:mono,fontWeight:500,outline:"none",textAlign:"center",boxSizing:"border-box"};
-const inpL={...inp,textAlign:"left",paddingLeft:12,fontSize:13};
+const inp={width:"100%",padding:"10px 8px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.tx,fontSize:16,fontFamily:mono,fontWeight:500,outline:"none",textAlign:"center",boxSizing:"border-box"};
+const inpL={...inp,textAlign:"left",paddingLeft:12,fontSize:16};
 const sbtn={background:C.sf,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:14,cursor:"pointer",width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0};
 const tbtn={background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:6,color:C.mt,fontSize:14,cursor:"pointer",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center"};
 const btnP={width:"100%",padding:"12px",background:C.ac,border:"none",borderRadius:10,color:C.bg,fontSize:14,fontWeight:700,cursor:"pointer"};
@@ -42,7 +42,7 @@ function calcTDEE(weightLb,heightIn,age,actMult){
   const bmr=10*wKg+6.25*hCm-5*age+5; // Mifflin-St Jeor male
   return Math.round(bmr*actMult);
 }
-const VOL_TARGETS={Quads:{min:10,max:20},Hamstrings:{min:10,max:16},Glutes:{min:6,max:16},Chest:{min:10,max:20},Back:{min:10,max:20},Shoulders:{min:8,max:16},Biceps:{min:6,max:14},Triceps:{min:6,max:14},Calves:{min:6,max:12}};
+const VOL_TARGETS={Quads:{min:10,max:20},Hamstrings:{min:10,max:16},Glutes:{min:6,max:16},Chest:{min:10,max:20},"Upper Chest":{min:4,max:10},Back:{min:10,max:20},Lats:{min:6,max:12},"Mid Back":{min:4,max:10},Shoulders:{min:8,max:16},"Side Delts":{min:6,max:12},"Rear Delts":{min:4,max:10},Biceps:{min:6,max:14},Triceps:{min:6,max:14},"Triceps Long Head":{min:3,max:8},Calves:{min:6,max:12},Adductors:{min:3,max:8},Abductors:{min:3,max:8}};
 
 // Calculations (unchanged)
 function navyBF(w,n,h){if(!w||!n||!h||w<=n)return null;return(86.010*Math.log10(w-n)-70.041*Math.log10(h)+36.76).toFixed(1);}
@@ -177,11 +177,11 @@ function MuscleDiagram({muscle, color}){
   const emptyData  = [];
 
   return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-      <div style={{fontSize:9,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+      <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
         {muscle} · {isFront?"Front":"Back"}
       </div>
-      <div style={{width:120}}>
+      <div style={{width:90}}>
         <Model
           data={activeData}
           style={{width:"100%"}}
@@ -474,7 +474,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
     const tempFood={id:`ai_${Date.now()}`,name:aiResult.name,protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving"};
     const entry={id:`t_${Date.now()}`,food:tempFood.name,portions:1,protein:tempFood.protein_g,carbs:tempFood.carbs_g,fat:tempFood.fat_g,calories:tempFood.calories,foodId:null};
     setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});
-    try{if(!saveToDb){const{data:ins}=await supabase.from("meal_log").insert({log_date:td,food_id:null,portions:1,notes:tempFood.name,protein_override:tempFood.protein_g,carbs_override:tempFood.carbs_g,fat_override:tempFood.fat_g,calories_override:tempFood.calories}).select().single();if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}}catch{}
+    // Log only — no DB insert since food_id is required by schema
     setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);}
 
   return(
@@ -637,7 +637,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
         <div style={{...card,marginBottom:12}}>
           <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search foods..." style={{...inpL,marginBottom:8}} autoFocus/>
           <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>{["All","Protein","Carb","Fat","RTD Protein","Snack","Meal","Misc"].map(c=><button key={c} onClick={()=>setCat(c)} style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${cat===c?C.ac:C.bd}`,background:cat===c?`${C.ac}12`:"transparent",color:cat===c?C.ac:C.mt,fontSize:10,cursor:"pointer"}}>{c}</button>)}</div>
-          <div style={{maxHeight:280,overflowY:"auto"}}>{flt.length===0?<div style={{padding:"20px 0",textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:flt.map(f=><button key={f.id} onClick={()=>add(f)} style={{width:"100%",padding:"10px 4px",background:"none",border:"none",borderBottom:`1px solid ${C.bd}`,color:C.tx,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div><div style={{fontSize:10,color:C.mt,marginTop:1}}>{f.portion_size} {f.portion_unit}</div></div><div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:12,fontFamily:mono,color:C.gn,fontWeight:600}}>{f.protein_g}p</div><div style={{fontSize:9,color:C.mt,fontFamily:mono}}>{f.calories}cal</div></div></button>)}</div>
+          <div style={{maxHeight:280,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>{flt.length===0?<div style={{padding:"20px 0",textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:flt.map(f=><button key={f.id} onClick={()=>add(f)} style={{width:"100%",padding:"10px 4px",background:"none",border:"none",borderBottom:`1px solid ${C.bd}`,color:C.tx,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div><div style={{fontSize:10,color:C.mt,marginTop:1}}>{f.portion_size} {f.portion_unit}</div></div><div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:12,fontFamily:mono,color:C.gn,fontWeight:600}}>{f.protein_g}p</div><div style={{fontSize:9,color:C.mt,fontFamily:mono}}>{f.calories}cal</div></div></button>)}</div>
         </div>
       )}
       {log.length>0&&(<div><div style={{...hlbl,marginBottom:8}}>Today</div>{log.map((m,i)=><div key={m.id||i} style={{background:C.sf,borderRadius:10,border:`1px solid ${C.bd}`,padding:"10px 12px",marginBottom:5,display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.food}</div><div style={{fontSize:10,color:C.mt,fontFamily:mono,marginTop:1}}>{Math.round(m.protein*m.portions)}p · {Math.round(m.carbs*m.portions)}c · {Math.round(m.fat*m.portions)}f · {Math.round(m.calories*m.portions)}cal</div></div><div style={{display:"flex",alignItems:"center",gap:3}}><button onClick={()=>up(i,m.portions-0.5)} style={tbtn}>-</button><span style={{fontSize:12,fontFamily:mono,width:24,textAlign:"center"}}>{m.portions}</span><button onClick={()=>up(i,m.portions+0.5)} style={tbtn}>+</button></div><button onClick={()=>rm(i)} style={{background:"none",border:"none",color:C.rd,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button></div>)}</div>)}
@@ -779,7 +779,8 @@ function Stats({meas,week,online}){
   const wd=meas.filter(m=>m.bodyweight_lb);
   const bfData=meas.filter(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return bf!==null;}).map((m,i)=>{const bf=parseFloat(m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null));return{x:i+1,y:bf};});
   const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
-  const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])];
+  // Merge VOL_TARGETS keys with actual logged muscles, deduplicated
+  const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])].filter(m=>VOL_TARGETS[m]||vol[m]);
   const volD=allM.map(m=>({muscle:m,actual:vol[m]||0,min:VOL_TARGETS[m]?.min||0,max:VOL_TARGETS[m]?.max||20})).sort((a,b)=>b.actual-a.actual);
   const maxB=Math.max(...volD.map(v=>Math.max(v.actual,v.max)),1);
   const topPR=prs[0];
