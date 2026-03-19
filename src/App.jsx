@@ -166,10 +166,11 @@ function MuscleDiagram({muscle, color}){
   if(!info) return null;
   const col = color || C.ac;
 
-  // Each slug needs its own data entry for the library to highlight it
+  // frequency:1 maps to highlightedColors[0] = col
   const data = [{
     name: muscle,
     muscles: info.slugs,
+    frequency: 1,
   }];
 
   return(
@@ -177,12 +178,13 @@ function MuscleDiagram({muscle, color}){
       <div style={{fontSize:9,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
         {muscle}
       </div>
-      <div style={{width:120}}>
+      <div style={{width:160}}>
         <Model
           data={data}
           style={{width:"100%"}}
           highlightedColors={[col]}
-          bodyColor="#3a3a45"
+          bodyColor="#45454f"
+          scale={0.9}
         />
       </div>
     </div>
