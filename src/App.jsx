@@ -128,6 +128,49 @@ export default function App(){
   );
 }
 
+
+// Muscle map — paths keyed by muscle name
+const MUSCLE_PATHS={
+  // FRONT
+  Chest:{side:"front",paths:["M 88,112 C 80,108 72,115 70,128 C 68,142 74,155 85,158 C 92,160 98,155 100,148 L 100,115 Z","M 112,112 C 120,108 128,115 130,128 C 132,142 126,155 115,158 C 108,160 102,155 100,148 L 100,115 Z"]},
+  Shoulders:{side:"front",paths:["M 65,108 C 55,100 50,112 52,122 C 54,130 62,135 70,128 C 75,122 74,112 65,108 Z","M 135,108 C 145,100 150,112 148,122 C 146,130 138,135 130,128 C 125,122 126,112 135,108 Z"]},
+  Biceps:{side:"front",paths:["M 52,125 C 46,130 42,142 44,155 C 46,165 54,168 60,163 C 66,158 68,145 66,133 C 64,124 57,122 52,125 Z","M 148,125 C 154,130 158,142 156,155 C 154,165 146,168 140,163 C 134,158 132,145 134,133 C 136,124 143,122 148,125 Z"]},
+  Triceps:{side:"back",paths:["M 52,125 C 46,130 42,142 44,155 C 46,165 54,168 60,163 C 66,158 68,145 66,133 C 64,124 57,122 52,125 Z","M 148,125 C 154,130 158,142 156,155 C 154,165 146,168 140,163 C 134,158 132,145 134,133 C 136,124 143,122 148,125 Z"]},
+  Quads:{side:"front",paths:["M 78,215 C 72,220 68,240 70,265 C 72,285 80,295 88,292 C 96,289 100,275 100,255 L 100,215 Z","M 122,215 C 128,220 132,240 130,265 C 128,285 120,295 112,292 C 104,289 100,275 100,255 L 100,215 Z"]},
+  Calves:{side:"back",paths:["M 78,320 C 72,325 70,345 72,362 C 74,375 82,380 88,376 C 94,372 96,358 95,340 C 94,328 84,318 78,320 Z","M 122,320 C 128,325 130,345 128,362 C 126,375 118,380 112,376 C 106,372 104,358 105,340 C 106,328 116,318 122,320 Z"]},
+  Abs:{side:"front",paths:["M 88,162 C 84,165 82,175 83,188 C 84,198 88,205 100,205 C 112,205 116,198 117,188 C 118,175 116,165 112,162 Z"]},
+  // BACK
+  Back:{side:"back",paths:["M 72,112 C 64,115 60,128 62,142 C 64,155 72,162 82,160 C 90,158 98,150 100,140 L 100,112 Z","M 128,112 C 136,115 140,128 138,142 C 136,155 128,162 118,160 C 110,158 102,150 100,140 L 100,112 Z"]},
+  Hamstrings:{side:"back",paths:["M 78,215 C 72,220 68,240 70,265 C 72,285 80,295 88,292 C 96,289 100,275 100,255 L 100,215 Z","M 122,215 C 128,220 132,240 130,265 C 128,285 120,295 112,292 C 104,289 100,275 100,255 L 100,215 Z"]},
+  Glutes:{side:"back",paths:["M 72,192 C 65,196 62,210 65,222 C 68,232 78,238 88,234 C 96,230 100,220 100,210 L 100,192 Z","M 128,192 C 135,196 138,210 135,222 C 132,232 122,238 112,234 C 104,230 100,220 100,210 L 100,192 Z"]},
+  Adductors:{side:"front",paths:["M 90,215 C 86,222 84,240 86,260 C 88,272 94,278 100,278 C 106,278 112,272 114,260 C 116,240 114,222 110,215 Z"]},
+  Abductors:{side:"front",paths:["M 68,210 C 62,215 60,228 63,240 C 66,250 74,255 80,250 C 86,245 86,232 84,222 C 82,214 74,208 68,210 Z","M 132,210 C 138,215 140,228 137,240 C 134,250 126,255 120,250 C 114,245 114,232 116,222 C 118,214 126,208 132,210 Z"]},
+};
+
+// Body outline paths — front and back silhouette
+const BODY_FRONT=`M100,20 C88,20 78,28 76,40 C74,50 78,58 82,64 L78,72 C68,74 58,82 54,92 C50,102 52,114 58,122 L42,160 C38,175 36,192 38,205 C40,215 46,220 52,218 L58,280 C56,300 55,320 58,340 C60,355 65,368 68,380 L72,400 C74,408 80,412 88,410 L92,410 L92,345 C95,340 100,338 100,338 C100,338 105,340 108,345 L108,410 L112,410 C120,412 126,408 128,400 L132,380 C135,368 140,355 142,340 C145,320 144,300 142,280 L148,218 C154,220 160,215 162,205 C164,192 162,175 158,160 L142,122 C148,114 150,102 146,92 C142,82 132,74 122,72 L118,64 C122,58 126,50 124,40 C122,28 112,20 100,20 Z`;
+const BODY_BACK=`M100,20 C88,20 78,28 76,40 C74,50 78,58 82,64 L78,72 C68,74 58,82 54,92 C50,102 52,114 58,122 L42,160 C38,175 36,192 38,205 C40,215 46,220 52,218 L58,280 C56,300 55,320 58,340 C60,355 65,368 68,380 L72,400 C74,408 80,412 88,410 L92,410 L92,345 C95,340 100,338 100,338 C100,338 105,340 108,345 L108,410 L112,410 C120,412 126,408 128,400 L132,380 C135,368 140,355 142,340 C145,320 144,300 142,280 L148,218 C154,220 160,215 162,205 C164,192 162,175 158,160 L142,122 C148,114 150,102 146,92 C142,82 132,74 122,72 L118,64 C122,58 126,50 124,40 C122,28 112,20 100,20 Z`;
+
+function MuscleDiagram({muscle,color}){
+  const info=MUSCLE_PATHS[muscle];
+  if(!info)return null;
+  const isFront=info.side==="front";
+  const body=isFront?BODY_FRONT:BODY_BACK;
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+      <div style={{fontSize:8,color:color||C.ac,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>{isFront?"Front":"Back"}</div>
+      <svg viewBox="30 15 140 405" style={{width:70,height:140}} xmlns="http://www.w3.org/2000/svg">
+        {/* Body silhouette */}
+        <path d={body} fill={C.sf2} stroke={C.bd} strokeWidth="1.5"/>
+        {/* Highlighted muscle */}
+        {info.paths.map((p,i)=>(
+          <path key={i} d={p} fill={color||C.ac} fillOpacity="0.85" stroke={color||C.ac} strokeWidth="0.5"/>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online}){
   const[showCfg,setShowCfg]=useState(false);const[wc,setWc]=useState(null);const[summary,setSummary]=useState(null);const[showSum,setShowSum]=useState(false);const[dismissedDL,setDismissedDL]=useState(false);const[completedDays,setCompletedDays]=useState({});
   useEffect(()=>{lc();loadSummary();},[week]);
@@ -274,6 +317,10 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
                     {ex.video&&<a href={ex.video} target="_blank" rel="noopener noreferrer" style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.ac,fontSize:11,textDecoration:"none",flexShrink:0}}>Watch</a>}
                     <button onClick={()=>history?.exerciseId===ex.id?setHistory(null):loadHistory(ex.id)} style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${history?.exerciseId===ex.id?`${C.ac}44`:C.bd}`,borderRadius:8,color:history?.exerciseId===ex.id?C.ac:C.mt,fontSize:11,cursor:"pointer",flexShrink:0}}>History</button>
                   </div>
+                  {/* Muscle diagram */}
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
+                    <MuscleDiagram muscle={ex.muscle} color={pg?.up?C.gn:pg?.deload?C.am:C.ac}/>
+                  </div>
                   {history?.exerciseId===ex.id&&history.weeks.length>0&&(
                     <div style={{background:C.sf2,borderRadius:10,padding:10,marginBottom:10}}>
                       <div style={{...hlbl,marginBottom:8}}>Weight progression</div>
@@ -290,8 +337,6 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
                       </div>
                     </div>
                   )}
-                  {/* Copy all sets from last week */}
-                  {pg&&<button onClick={()=>{fill(ex.id,es,pg.w);}} style={{width:"100%",padding:"7px",marginBottom:8,background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:11,cursor:"pointer"}}>↩ Copy last week ({pg.w}lb × {es} sets)</button>}
                   <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
                     <button onClick={()=>fill(ex.id,es,todayWeight||0)} style={{padding:"7px 12px",background:pg?.up?`${C.gn}10`:pg?.deload?`${C.am}10`:C.sf2,border:`1px solid ${pg?.up?`${C.gn}33`:pg?.deload?`${C.am}33`:C.bd}`,borderRadius:8,color:pg?.up?C.gn:pg?.deload?C.am:C.mt,fontSize:12,fontWeight:600,cursor:"pointer"}}>Fill {todayWeight||0}lb</button>
                     {pg?.up&&<button onClick={()=>fill(ex.id,es,pg.w)} style={{padding:"7px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer"}}>Keep {pg.w}lb</button>}
