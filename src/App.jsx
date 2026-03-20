@@ -427,7 +427,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   // Barcode scanner using device camera + ZXing
   async function startScan(){
     scanLockRef.current=false;
-    setShowScan(true);setScanStatus("Starting camera...");
+    setShowScan(true);setShowAI(false);setAiResult(null);setScanStatus("Starting camera...");
     try{
       const ZXing=await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm");
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
@@ -436,32 +436,70 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
       setScanStatus("Point camera at barcode");
       const reader=new ZXing.BrowserMultiFormatReader();
       reader.decodeFromStream(stream,scanRef.current,async(result,err)=>{
-        // Lock prevents the callback firing multiple times on same barcode
         if(!result||scanLockRef.current)return;
         scanLockRef.current=true;
         const barcode=result.getText();
-        stopScan();
-        setScanStatus("Looking up...");setShowScan(true);
+        // Stop camera immediately and stay in loading state
+        if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+        setScanStatus("Looking up product...");
         try{
           const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
           const data=await res.json();
           if(data.status===1&&data.product){
-            const p=data.product;const n=p.nutriments;
+            const p=data.product;
+            const n=p.nutriments;
+            // Determine if data is per serving or per 100g
+            // Open Food Facts stores per-serving in _serving fields, per-100g in base fields
+            // If serving size exists and _serving fields exist, use those
+            // If only 100g fields exist, we need serving size to scale
+            const hasServingData = n.proteins_serving!=null || n["energy-kcal_serving"]!=null;
+            const servingQty = parseFloat(p.serving_quantity)||0;
+            const servingSize = p.serving_size||"serving";
+            let protein, carbs, fat, calories;
+            if(hasServingData){
+              // Use per-serving values directly
+              protein = parseFloat(n.proteins_serving||0);
+              carbs = parseFloat(n.carbohydrates_serving||0);
+              fat = parseFloat(n.fat_serving||0);
+              calories = parseFloat(n["energy-kcal_serving"]||0);
+            } else if(servingQty>0){
+              // Scale per-100g values to serving size
+              const scale = servingQty/100;
+              protein = parseFloat(n.proteins||0)*scale;
+              carbs = parseFloat(n.carbohydrates||0)*scale;
+              fat = parseFloat(n.fat||0)*scale;
+              calories = parseFloat(n["energy-kcal"]||0)*scale;
+            } else {
+              // Fall back to per-100g and note it
+              protein = parseFloat(n.proteins||0);
+              carbs = parseFloat(n.carbohydrates||0);
+              fat = parseFloat(n.fat||0);
+              calories = parseFloat(n["energy-kcal"]||0);
+            }
             setAiResult({
               name:p.product_name||p.generic_name||"Scanned food",
-              portion_size:parseFloat(p.serving_quantity)||1,
-              portion_unit:p.serving_size||"serving",
-              protein_g:parseFloat(n.proteins_serving||n.proteins||0),
-              carbs_g:parseFloat(n.carbohydrates_serving||n.carbohydrates||0),
-              fat_g:parseFloat(n.fat_serving||n.fat||0),
-              calories:parseFloat(n["energy-kcal_serving"]||n["energy-kcal"]||0),
-              notes:"From barcode scan"
+              portion_size:servingQty||100,
+              portion_unit:servingSize,
+              protein_g:Math.round(protein*10)/10,
+              carbs_g:Math.round(carbs*10)/10,
+              fat_g:Math.round(fat*10)/10,
+              calories:Math.round(calories),
+              notes:hasServingData?"From barcode scan":servingQty>0?"Scaled to serving size":"Per 100g — check serving size"
             });
-            setShowAI(true);setShowScan(false);setScanStatus("Point camera at barcode");
-          }else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
-        }catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
+            setShowScan(false);setShowAI(true);setScanStatus("Point camera at barcode");
+          }else{
+            setScanStatus("Product not found — try AI Log instead");
+            setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);
+          }
+        }catch{
+          setScanStatus("Lookup failed — try AI Log instead");
+          setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);
+        }
       });
-    }catch(e){setScanStatus(`Camera error: ${e.message}`);setTimeout(()=>setShowScan(false),2000);}
+    }catch(e){
+      setScanStatus(`Camera error: ${e.message}`);
+      setTimeout(()=>setShowScan(false),2500);
+    }
   }
   function stopScan(){
     scanLockRef.current=false;
