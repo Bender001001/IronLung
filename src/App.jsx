@@ -26,10 +26,10 @@ const hlbl={fontSize:9,fontWeight:600,color:C.mt,textTransform:"uppercase",lette
 const ROTATION=["Lower A","Upper A","Rest","Lower B","Upper B","Arms & Delts","Rest"];
 const WEEK_TYPES=["Learning","Accumulation","Deload","Peak"];
 const GOALS=[
-  {name:"Cut",delta:-500,desc:"-500 cal"},
+  {name:"Cut",delta:-350,desc:"-350 cal"},
   {name:"Maintain",delta:0,desc:"TDEE"},
-  {name:"Lean Bulk",delta:250,desc:"+250 cal"},
-  {name:"Bulk",delta:500,desc:"+500 cal"},
+  {name:"Lean Bulk",delta:175,desc:"+175 cal"},
+  {name:"Bulk",delta:400,desc:"+400 cal"},
 ];
 const ACTIVITY=[
   {name:"Light",label:"1-2x/week",mult:1.375},
@@ -114,7 +114,7 @@ export default function App(){
       {(!online||pc>0)&&<div style={{background:!online?`${C.am}14`:C.sf,borderBottom:`1px solid ${!online?`${C.am}30`:C.bd}`,padding:"7px 16px",display:"flex",alignItems:"center",gap:7}}><div style={{width:6,height:6,borderRadius:"50%",background:!online?C.am:C.gn,flexShrink:0}}/><span style={{fontSize:11,color:!online?C.am:C.gn}}>{!online?"Offline mode":pc>0?`Syncing ${pc} items...`:"Synced"}</span></div>}
       {tab==="train"&&!selDay&&<DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online}/>}
       {tab==="train"&&selDay&&<Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} online={online} onPC={()=>setPc(getPending().length)}/>}
-      {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} online={online} onPC={()=>setPc(getPending().length)}/>}
+      {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)}/>}
       {tab==="body"&&<Body meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} online={online} onPC={()=>setPc(getPending().length)}/>}
       {tab==="stats"&&<Stats meas={meas} week={week} online={online}/>}
       <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.sf,borderTop:`1px solid ${C.bd}`,display:"flex",zIndex:100,padding:"6px 0 env(safe-area-inset-bottom,4px)"}}>
@@ -384,8 +384,13 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
   );
 }
 
-function Fuel({foods,setFoods,mt,setMt,online,onPC}){
-  const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const savedMt=cache.get("mt");const[calcW,setCalcW]=useState(String(savedMt?.bw||"205"));const[calcH,setCalcH]=useState("71");const[calcAge,setCalcAge]=useState("30");const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(savedMt?.goalName||"Lean Bulk");const[calcP,setCalcP]=useState("1.0");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
+function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
+  const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const savedMt=cache.get("mt");
+  // Seed from latest body measurement if available
+  const latMeas=meas.length>0?meas[meas.length-1]:null;
+  const latBW=latMeas?.bodyweight_lb||savedMt?.bw||205;
+  const latBF=latMeas?.body_fat_pct||(latMeas?.waist_in&&latMeas?.neck_in&&latMeas?.height_in?navyBF(latMeas.waist_in,latMeas.neck_in,latMeas.height_in):null)||19.5;
+  const[calcW,setCalcW]=useState(String(latBW));const[calcH,setCalcH]=useState(String(latMeas?.height_in||71));const[calcAge,setCalcAge]=useState("30");const[calcBF,setCalcBF]=useState(String(parseFloat(latBF).toFixed(1)));const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(savedMt?.goalName||"Cut");const[calcP,setCalcP]=useState("1.18");const[calcF,setCalcF]=useState("0.37");const[useEmpirical,setUseEmpirical]=useState(true);const[empiricalMaint,setEmpiricalMaint]=useState(String(cache.get("empiricalMaint")||"3100"));const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
   const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);const scanLockRef=useRef(false);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
@@ -398,29 +403,35 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   const flt=foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
   function recalc(){
     const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;
+    const bf=parseFloat(calcBF)||20;
+    const leanMass=w*(1-bf/100);
     const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];
     const goal=GOALS.find(g=>g.name===calcG)||GOALS[1];
-    const tdee=calcTDEE(w,h,age,act.mult);
+    const tdee=useEmpirical?parseFloat(empiricalMaint)||3100:calcTDEE(w,h,age,act.mult);
     const cal=Math.round(tdee+goal.delta);
-    const protein=Math.round(w*parseFloat(calcP)||w);
-    const fat=Math.round(w*(parseFloat(calcF)||0.35));
+    // Protein based on lean mass, not total bodyweight
+    const protein=Math.round(leanMass*(parseFloat(calcP)||1.18));
+    const fat=Math.max(70,Math.round(leanMass*(parseFloat(calcF)||0.37)));
     const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));
-    setMt({protein,carbs,fat,calories:cal});
-    cache.set("mt",{protein,carbs,fat,calories:cal});
+    setMt({protein,carbs,fat,calories:cal,goalName:calcG,bw:w});
+    cache.set("mt",{protein,carbs,fat,calories:cal,goalName:calcG,bw:w});
+    if(useEmpirical)cache.set("empiricalMaint",empiricalMaint);
     try{supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);}catch{}
     setShowCalc(false);
   }
   // Live preview for calculator
   function previewMacros(overrideGoal){
     const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;
+    const bf=parseFloat(calcBF)||20;
+    const leanMass=w*(1-bf/100);
     const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];
     const goal=GOALS.find(g=>g.name===(overrideGoal||calcG))||GOALS[1];
-    const tdee=calcTDEE(w,h,age,act.mult);
+    const tdee=useEmpirical?parseFloat(empiricalMaint)||3100:calcTDEE(w,h,age,act.mult);
     const cal=Math.round(tdee+goal.delta);
-    const protein=Math.round(w*(parseFloat(calcP)||1.0));
-    const fat=Math.round(w*(parseFloat(calcF)||0.35));
+    const protein=Math.round(leanMass*(parseFloat(calcP)||1.18));
+    const fat=Math.max(70,Math.round(leanMass*(parseFloat(calcF)||0.37)));
     const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));
-    return{protein,carbs,fat,calories:cal,tdee};
+    return{protein,carbs,fat,calories:cal,tdee,leanMass:Math.round(leanMass)};
   }
 
   // AI food parser
@@ -530,24 +541,49 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
         const prev=previewMacros();
         return(
         <div style={{...card,marginBottom:14}}>
-          {/* Stats row */}
+          {/* Body stats */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
-            <div><div style={{...hlbl,marginBottom:4}}>Weight</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Weight (lb)</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={{...inp,fontSize:13}}/></div>
             <div><div style={{...hlbl,marginBottom:4}}>Height (in)</div><input type="number" value={calcH} onChange={e=>setCalcH(e.target.value)} style={{...inp,fontSize:13}}/></div>
             <div><div style={{...hlbl,marginBottom:4}}>Age</div><input type="number" value={calcAge} onChange={e=>setCalcAge(e.target.value)} style={{...inp,fontSize:13}}/></div>
-            <div><div style={{...hlbl,marginBottom:4}}>Pro/lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Body Fat %</div><input type="number" value={calcBF} onChange={e=>setCalcBF(e.target.value)} style={{...inp,fontSize:13}}/></div>
           </div>
-          {/* Activity */}
-          <div style={{...hlbl,marginBottom:6}}>Activity</div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
-            {ACTIVITY.map(a=><button key={a.name} onClick={()=>setCalcAct(a.name)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${calcAct===a.name?C.ac:C.bd}`,background:calcAct===a.name?`${C.ac}15`:"transparent",color:calcAct===a.name?C.ac:C.mt,fontSize:11,fontWeight:calcAct===a.name?600:400,cursor:"pointer"}}>{a.name}<span style={{fontSize:9,color:C.mt,display:"block"}}>{a.label}</span></button>)}
+          {/* Lean mass display */}
+          <div style={{padding:"7px 12px",background:`${C.gn}10`,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:11,color:C.mt}}>Lean mass (protein anchor)</span>
+            <span style={{fontFamily:mono,fontSize:13,fontWeight:700,color:C.gn}}>{prev.leanMass} lb</span>
           </div>
+          {/* Protein/Fat per lean lb */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+            <div><div style={{...hlbl,marginBottom:4}}>Protein / lean lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={{...inp,fontSize:13}}/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Fat / lean lb</div><input type="number" value={calcF} onChange={e=>setCalcF(e.target.value)} style={{...inp,fontSize:13}}/></div>
+          </div>
+          {/* Maintenance source toggle */}
+          <div style={{...hlbl,marginBottom:6}}>Maintenance calories</div>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            <button onClick={()=>setUseEmpirical(false)} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${!useEmpirical?C.ac:C.bd}`,background:!useEmpirical?`${C.ac}15`:"transparent",color:!useEmpirical?C.ac:C.mt,fontSize:11,fontWeight:!useEmpirical?600:400,cursor:"pointer"}}>Calculate (formula)</button>
+            <button onClick={()=>setUseEmpirical(true)} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${useEmpirical?C.ac:C.bd}`,background:useEmpirical?`${C.ac}15`:"transparent",color:useEmpirical?C.ac:C.mt,fontSize:11,fontWeight:useEmpirical?600:400,cursor:"pointer"}}>Real world (what I eat)</button>
+          </div>
+          {useEmpirical?(
+            <div style={{marginBottom:12}}>
+              <div style={{...hlbl,marginBottom:4}}>Calories currently maintaining on</div>
+              <input type="number" value={empiricalMaint} onChange={e=>setEmpiricalMaint(e.target.value)} style={{...inp,fontSize:16}}/>
+              <div style={{fontSize:10,color:C.mt,marginTop:5}}>Based on your actual weight trend — more accurate than any formula</div>
+            </div>
+          ):(
+            <div style={{marginBottom:12}}>
+              <div style={{...hlbl,marginBottom:6}}>Activity level</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {ACTIVITY.map(a=><button key={a.name} onClick={()=>setCalcAct(a.name)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${calcAct===a.name?C.ac:C.bd}`,background:calcAct===a.name?`${C.ac}15`:"transparent",color:calcAct===a.name?C.ac:C.mt,fontSize:11,fontWeight:calcAct===a.name?600:400,cursor:"pointer"}}>{a.name}<span style={{fontSize:9,color:C.mt,display:"block"}}>{a.label}</span></button>)}
+              </div>
+            </div>
+          )}
           {/* TDEE display */}
           <div style={{padding:"8px 12px",background:C.sf2,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:11,color:C.mt}}>TDEE (maintenance)</span>
+            <span style={{fontSize:11,color:C.mt}}>{useEmpirical?"Your maintenance":"Calculated TDEE"}</span>
             <span style={{fontFamily:mono,fontSize:14,fontWeight:700,color:C.tx}}>{prev.tdee} cal</span>
           </div>
-          {/* Goal buttons — instant preview */}
+          {/* Goal buttons */}
           <div style={{...hlbl,marginBottom:6}}>Goal</div>
           <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
             {GOALS.map(g=>{const p=previewMacros(g.name);return(
