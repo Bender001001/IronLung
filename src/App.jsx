@@ -386,7 +386,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
 
 function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const savedMt=cache.get("mt");const[calcW,setCalcW]=useState(String(savedMt?.bw||"205"));const[calcH,setCalcH]=useState("71");const[calcAge,setCalcAge]=useState("30");const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(savedMt?.goalName||"Lean Bulk");const[calcP,setCalcP]=useState("1.0");const[calcF,setCalcF]=useState("0.35");const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
-  const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);
+  const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);const scanLockRef=useRef(false);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
   async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
@@ -426,6 +426,7 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
   // AI food parser
   // Barcode scanner using device camera + ZXing
   async function startScan(){
+    scanLockRef.current=false;
     setShowScan(true);setScanStatus("Starting camera...");
     try{
       const ZXing=await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm");
@@ -435,34 +436,38 @@ function Fuel({foods,setFoods,mt,setMt,online,onPC}){
       setScanStatus("Point camera at barcode");
       const reader=new ZXing.BrowserMultiFormatReader();
       reader.decodeFromStream(stream,scanRef.current,async(result,err)=>{
-        if(result){
-          const barcode=result.getText();
-          stopScan();
-          setScanStatus("Looking up...");setShowScan(true);
-          try{
-            const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
-            const data=await res.json();
-            if(data.status===1&&data.product){
-              const p=data.product;const n=p.nutriments;
-              const per=parseFloat(p.serving_size)||100;
-              setAiResult({
-                name:p.product_name||p.generic_name||"Scanned food",
-                portion_size:parseFloat(p.serving_quantity)||1,
-                portion_unit:p.serving_size||"serving",
-                protein_g:parseFloat(n.proteins_serving||n.proteins||0),
-                carbs_g:parseFloat(n.carbohydrates_serving||n.carbohydrates||0),
-                fat_g:parseFloat(n.fat_serving||n.fat||0),
-                calories:parseFloat(n["energy-kcal_serving"]||n["energy-kcal"]||0),
-                notes:"From barcode scan"
-              });
-              setShowAI(true);setShowScan(false);setScanStatus("Point camera at barcode");
-            }else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
-          }catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
-        }
+        // Lock prevents the callback firing multiple times on same barcode
+        if(!result||scanLockRef.current)return;
+        scanLockRef.current=true;
+        const barcode=result.getText();
+        stopScan();
+        setScanStatus("Looking up...");setShowScan(true);
+        try{
+          const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+          const data=await res.json();
+          if(data.status===1&&data.product){
+            const p=data.product;const n=p.nutriments;
+            setAiResult({
+              name:p.product_name||p.generic_name||"Scanned food",
+              portion_size:parseFloat(p.serving_quantity)||1,
+              portion_unit:p.serving_size||"serving",
+              protein_g:parseFloat(n.proteins_serving||n.proteins||0),
+              carbs_g:parseFloat(n.carbohydrates_serving||n.carbohydrates||0),
+              fat_g:parseFloat(n.fat_serving||n.fat||0),
+              calories:parseFloat(n["energy-kcal_serving"]||n["energy-kcal"]||0),
+              notes:"From barcode scan"
+            });
+            setShowAI(true);setShowScan(false);setScanStatus("Point camera at barcode");
+          }else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
+        }catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>setShowScan(false),2000);}
       });
     }catch(e){setScanStatus(`Camera error: ${e.message}`);setTimeout(()=>setShowScan(false),2000);}
   }
-  function stopScan(){if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setShowScan(false);}
+  function stopScan(){
+    scanLockRef.current=false;
+    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    setShowScan(false);
+  }
 
   function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
   async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);
