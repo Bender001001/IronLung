@@ -169,7 +169,7 @@ export default function App(){
   return(
     <div style={{background:C.bg,minHeight:"100vh",color:C.tx,fontFamily:sans,maxWidth:480,margin:"0 auto",paddingBottom:80}}>
       {(!online||pc>0)&&<div style={{background:!online?`${C.am}14`:C.sf,borderBottom:`1px solid ${!online?`${C.am}30`:C.bd}`,padding:"7px 16px",display:"flex",alignItems:"center",gap:7}}><div style={{width:6,height:6,borderRadius:"50%",background:!online?C.am:C.gn,flexShrink:0}}/><span style={{fontSize:11,color:!online?C.am:C.gn}}>{!online?"Offline mode":pc>0?`Syncing ${pc} items...`:"Synced"}</span></div>}
-      {tab==="train"&&!selDay&&<DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram}/>}
+      {tab==="train"&&!selDay&&<DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram} meas={meas} onAddMeas={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))}/>}
       {tab==="train"&&selDay&&<Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} online={online} onPC={()=>setPc(getPending().length)} activeProgram={activeProgram}/>}
       {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)}/>}
       {tab==="body"&&<Body meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} online={online} onPC={()=>setPc(getPending().length)}/>}
@@ -228,15 +228,36 @@ function MuscleDiagram({muscle,color}){
   );
 }
 
-function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online,activeProgram,switchProgram}){
+function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online,activeProgram,switchProgram,meas,onAddMeas}){
   const[showCfg,setShowCfg]=useState(false);
   const[wc,setWc]=useState(null);
   const[summary,setSummary]=useState(null);
   const[showSum,setShowSum]=useState(false);
   const[dismissedDL,setDismissedDL]=useState(false);
   const[completedDays,setCompletedDays]=useState({});
+  const[showBWInput,setShowBWInput]=useState(false);
+  const[bwInput,setBwInput]=useState("");
+  const latMeas=meas&&meas.length>0?meas[meas.length-1]:null;
+  const todayBW=latMeas?.measure_date===localDate()?latMeas?.bodyweight_lb:null;
+  const lastBW=latMeas?.bodyweight_lb||null;
 
   useEffect(()=>{lc();loadSummary();},[week,activeProgram]);
+
+  async function logBW(){
+    if(!bwInput)return;
+    const lat=meas&&meas.length>0?meas[meas.length-1]:null;
+    const entry={measure_date:localDate(),bodyweight_lb:parseFloat(bwInput)||null};
+    if(lat?.height_in)entry.height_in=lat.height_in;
+    try{
+      const{data}=await supabase.from("measurements").insert(entry).select().single();
+      if(data)onAddMeas(data);
+    }catch{
+      onAddMeas({...entry,id:`t_${Date.now()}`});
+      addPending({type:"insert_measurement",data:entry});
+    }
+    setShowBWInput(false);
+    setBwInput("");
+  }
 
   async function lc(){
     if(!online){setWc(null);return;}
@@ -268,13 +289,21 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
       let totalSets=0,completedSets=0,prCount=0;const muscles={};
       const{data:prevData}=await supabase
         .from("workout_sessions")
-        .select("id,workout_sets(exercise_id,weight_lb,exercises(name))")
+        .select("id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle))")
         .eq("week_number",week-1)
         .eq("program_id",activeProgram);
-      const prevBest={};
-      if(prevData)prevData.forEach(s=>s.workout_sets.forEach(ws=>{const n=ws.exercises?.name;if(!n||!ws.weight_lb)return;if(!prevBest[n]||ws.weight_lb>prevBest[n])prevBest[n]=ws.weight_lb;}));
+      const prevBest={};const prevMuscles={};
+      if(prevData)prevData.forEach(s=>s.workout_sets.forEach(ws=>{
+        const n=ws.exercises?.name;
+        if(n&&ws.weight_lb){if(!prevBest[n]||ws.weight_lb>prevBest[n])prevBest[n]=ws.weight_lb;}
+        if(ws.reps>0&&ws.exercises?.primary_muscle){const m=ws.exercises.primary_muscle;prevMuscles[m]=(prevMuscles[m]||0)+1;}
+      }));
       data.forEach(s=>{s.workout_sets.forEach(ws=>{totalSets++;if(ws.reps>0){completedSets++;if(ws.exercises?.primary_muscle){const m=ws.exercises.primary_muscle;muscles[m]=(muscles[m]||0)+1;}const n=ws.exercises?.name;if(n&&ws.weight_lb&&prevBest[n]&&ws.weight_lb>prevBest[n])prCount++;}});});
-      setSummary({totalSets,completedSets,prCount,sessionsLogged:data.length,muscles});
+      // Week-over-week delta per muscle
+      const muscleDeltas={};
+      const allMuscles=new Set([...Object.keys(muscles),...Object.keys(prevMuscles)]);
+      allMuscles.forEach(m=>{const delta=(muscles[m]||0)-(prevMuscles[m]||0);if(delta!==0)muscleDeltas[m]=delta;});
+      setSummary({totalSets,completedSets,prCount,sessionsLogged:data.length,muscles,muscleDeltas});
     }catch{}
   }
 
@@ -316,6 +345,29 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         })}
       </div>
 
+      {/* Quick bodyweight log */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 14px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10}}>
+        <div style={{flex:1}}>
+          <div style={{...hlbl,marginBottom:3}}>Bodyweight</div>
+          <div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:todayBW?C.gn:C.tx}}>
+            {todayBW?`${todayBW} lb`:lastBW?`${lastBW} lb`:<span style={{color:C.mt}}>—</span>}
+            {todayBW&&<span style={{fontSize:10,color:C.gn,marginLeft:6,fontWeight:500}}>logged today</span>}
+            {!todayBW&&lastBW&&<span style={{fontSize:10,color:C.mt,marginLeft:6}}>last logged</span>}
+          </div>
+        </div>
+        {showBWInput?(
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <input type="number" inputMode="decimal" value={bwInput} onChange={e=>setBwInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&logBW()} placeholder="lbs" style={{...inp,width:72,fontSize:14,padding:"7px 6px"}} autoFocus/>
+            <button onClick={logBW} style={{...btnGhost,padding:"7px 12px",color:C.gn,borderColor:`${C.gn}44`,fontSize:12,fontWeight:600}}>Save</button>
+            <button onClick={()=>setShowBWInput(false)} style={{background:"none",border:"none",color:C.mt,cursor:"pointer",fontSize:16,padding:"2px"}}>×</button>
+          </div>
+        ):(
+          <button onClick={()=>{setBwInput(lastBW?String(lastBW):"");setShowBWInput(true);}} style={{...btnGhost,padding:"6px 12px",fontSize:11}}>
+            {todayBW?"Edit":"Log weight"}
+          </button>
+        )}
+      </div>
+
       {/* Week meta bar */}
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
         <span style={{fontSize:11,fontWeight:600,color:isDL?C.am:C.tx2,padding:"3px 9px",background:isDL?`${C.am}12`:C.sf2,borderRadius:6,border:`1px solid ${isDL?C.am+"33":C.bd}`,flexShrink:0}}>{weekType}</span>
@@ -344,7 +396,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
               <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:s.c}}>{s.v}</div><div style={{...hlbl,marginTop:3}}>{s.l}</div></div>
             ))}
           </div>
-          {Object.keys(summary.muscles).length>0&&<div><div style={{...hlbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const inR=tgt&&sets>=tgt.min&&sets<=tgt.max;return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:C.sf2,border:`1px solid ${inR?`${C.gn}33`:C.bd}`,fontSize:10,fontFamily:mono}}><span style={{color:C.tx}}>{m}</span> <span style={{color:inR?C.gn:C.mt}}>{sets}</span></span>;})}</div></div>}
+          {Object.keys(summary.muscles).length>0&&<div><div style={{...hlbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const inR=tgt&&sets>=tgt.min&&sets<=tgt.max;const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:C.sf2,border:`1px solid ${inR?`${C.gn}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}><span style={{color:C.tx}}>{m}</span><span style={{color:inR?C.gn:C.mt}}>{sets}</span>{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
         </div>
       )}
 
@@ -396,6 +448,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[timerKey,setTimerKey]=useState(0);
   const[lw,setLw]=useState({});
   const[history,setHistory]=useState(null);
+  const[notes,setNotes]=useState("");
+  const[notesSaved,setNotesSaved]=useState(false);
 
   function eff(ex){return isDeload?Math.min(ex.sets,2):ex.sets;}
   useEffect(()=>{init();loadLast();},[day.id,week]);
@@ -492,13 +546,14 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     try{
       const{data}=await supabase
         .from("workout_sessions")
-        .select("id,workout_sets(*)")
+        .select("id,notes,workout_sets(*)")
         .eq("week_number",week)
         .eq("training_day_id",day.id)
         .eq("program_id",activeProgram)
         .limit(1);
       if(data?.[0]){
         setSid(data[0].id);
+        setNotes(data[0].notes||"");
         const l={};
         data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,dbId:w.id};});
         setSd(l);
@@ -519,6 +574,16 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
         onPC();
       }
     }
+  }
+
+  async function saveNotes(val){
+    setNotes(val);
+    if(!sid||String(sid).startsWith("temp_"))return;
+    try{
+      await supabase.from("workout_sessions").update({notes:val}).eq("id",sid);
+      setNotesSaved(true);
+      setTimeout(()=>setNotesSaved(false),1500);
+    }catch{}
   }
 
   function gs(eid,sn){return sd[`${eid}-${sn}`]||{weight:0,reps:0};}
@@ -565,7 +630,18 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           {saved&&<div style={{fontSize:8,color:C.gn,fontFamily:mono,marginTop:1}}>{saved}</div>}
         </div>
       </div>
-      <div style={{width:"100%",height:4,background:C.bd,borderRadius:2,marginBottom:14,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:2,transition:"width 0.3s"}}/></div>
+      <div style={{width:"100%",height:4,background:C.bd,borderRadius:2,marginBottom:10,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:2,transition:"width 0.3s"}}/></div>
+      {/* Session notes */}
+      <div style={{marginBottom:12,position:"relative"}}>
+        <textarea
+          value={notes}
+          onChange={e=>setNotes(e.target.value)}
+          onBlur={e=>saveNotes(e.target.value)}
+          placeholder="Session notes — how you felt, anything off, PRs to remember..."
+          style={{...inpL,height:notes?68:38,resize:"none",padding:"9px 12px",lineHeight:1.5,fontSize:12,color:C.tx,transition:"height 0.2s",fontFamily:sans}}
+        />
+        {notesSaved&&<span style={{position:"absolute",right:10,bottom:8,fontSize:9,color:C.gn,fontFamily:mono}}>saved</span>}
+      </div>
       {isDeload&&<div style={{padding:"8px 12px",marginBottom:12,background:`${C.am}10`,border:`1px solid ${C.am}22`,borderRadius:8,fontSize:11,color:C.am}}>Deload week — 2 sets at ~60%</div>}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {day.exercises.map((ex,xi)=>{
