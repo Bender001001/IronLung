@@ -176,7 +176,7 @@ function SkillsSection({ supabase }) {
     exCard: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginBottom: 10, cursor: 'pointer', transition: 'border-color 0.15s' },
     pill: { display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, marginRight: 6 },
     pillYou: { background: '#0d1e33', color: '#7ab8f5', border: '1px solid #1a3a5c' },
-    pillWife: { background: '#1e0d2e', color: '#c9a0dc', border: '1px solid #3c1a5c' },
+    pillAshslay: { background: '#1e0d2e', color: '#c9a0dc', border: '1px solid #3c1a5c' },
     btn: { padding: '8px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
     btnBack: { background: '#222', color: '#888', padding: '6px 12px', fontSize: 12 },
     btnGhost: { background: '#1e1e1e', color: '#666', border: '1px solid #2a2a2a', padding: '4px 10px', fontSize: 11 },
@@ -198,14 +198,14 @@ function SkillsSection({ supabase }) {
       {!loading && exercises.length === 0 && <div style={sc.empty}>No skills found. Run skills_reseed.sql in Supabase first.</div>}
       {exercises.map(ex => {
         const youStage = getCurrentStage(ex.id, 'You');
-        const wifeStage = getCurrentStage(ex.id, 'Wife');
+        const AshslayStage = getCurrentStage(ex.id, 'Ashslay');
         return (
           <div key={ex.id} style={sc.exCard} onClick={() => openExercise(ex)} onMouseEnter={e => e.currentTarget.style.borderColor = '#3a3a3a'} onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2a2a'}>
             <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{ex.name}</div>
             {ex.description && <div style={{ color: '#666', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>{ex.description}</div>}
             <div>
               {youStage && <span style={{ ...sc.pill, ...sc.pillYou }}>You — {youStage.name}</span>}
-              {wifeStage && <span style={{ ...sc.pill, ...sc.pillWife }}>Wife — {wifeStage.name}</span>}
+              {AshslayStage && <span style={{ ...sc.pill, ...sc.pillAshslay }}>Ashslay — {AshslayStage.name}</span>}
             </div>
           </div>
         );
@@ -214,7 +214,7 @@ function SkillsSection({ supabase }) {
   );
 
   if (view === 'detail' && selectedEx) {
-    const persons = ['You', 'Wife'];
+    const persons = ['You', 'Ashslay'];
     return (
       <div style={sc.page}>
         {toast && <div style={{ ...sc.toast, ...(toast.type === 'error' ? sc.toastErr : sc.toastOk) }}>{toast.msg}</div>}
@@ -264,7 +264,7 @@ function SkillsSection({ supabase }) {
         <div style={sc.logBox}>
           <div style={{ ...sc.sectionLabel, marginBottom: 14 }}>Log a session</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            {['You', 'Wife'].map(p => <button key={p} style={sc.personBtn(logForm.person === p, p === 'You')} onClick={() => setLogForm(f => ({ ...f, person: p }))}>{p}</button>)}
+            {['You', 'Ashslay'].map(p => <button key={p} style={sc.personBtn(logForm.person === p, p === 'You')} onClick={() => setLogForm(f => ({ ...f, person: p }))}>{p}</button>)}
           </div>
           {(() => { const s = getCurrentStage(selectedEx.id, logForm.person); return s ? <div style={{ color: '#444', fontSize: 11, marginBottom: 12 }}>Stage {s.stage_number} — {s.name} · Target: {s.target_value} {s.target_unit}</div> : null; })()}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -284,7 +284,7 @@ function SkillsSection({ supabase }) {
           return (
             <div key={log.id} style={sc.logRow}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ ...sc.pill, ...(isYou ? sc.pillYou : sc.pillWife), marginRight: 0 }}>{log.person}</span>
+                <span style={{ ...sc.pill, ...(isYou ? sc.pillYou : sc.pillAshslay), marginRight: 0 }}>{log.person}</span>
                 <span style={{ color: '#aaa', fontSize: 12 }}>{log.skill_stages?.name}</span>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -374,7 +374,7 @@ function CaliWorkoutsSection({ supabase }) {
       {!loading && templates.map(t => {
         const col = focusColor(t.focus);
         const youLast = lastDoneDate(t.id, 'You');
-        const wifeLast = lastDoneDate(t.id, 'Wife');
+        const AshslayLast = lastDoneDate(t.id, 'Ashslay');
         return (
           <div key={t.id} style={wc.card} onClick={() => { setSelected(t); setView('detail'); setShowScaled({}); }} onMouseEnter={e => e.currentTarget.style.borderColor = '#3a3a3a'} onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2a2a'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -385,8 +385,8 @@ function CaliWorkoutsSection({ supabase }) {
             <div style={{ color: '#666', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>{t.description}</div>
             <div style={{ display: 'flex', gap: 12 }}>
               {youLast && <span style={{ color: '#7ab8f5', fontSize: 11 }}>You — {youLast}</span>}
-              {wifeLast && <span style={{ color: '#c9a0dc', fontSize: 11 }}>Wife — {wifeLast}</span>}
-              {!youLast && !wifeLast && <span style={{ color: '#333', fontSize: 11 }}>Not done yet</span>}
+              {AshslayLast && <span style={{ color: '#c9a0dc', fontSize: 11 }}>Ashslay — {AshslayLast}</span>}
+              {!youLast && !AshslayLast && <span style={{ color: '#333', fontSize: 11 }}>Not done yet</span>}
             </div>
           </div>
         );
@@ -454,7 +454,7 @@ function CaliWorkoutsSection({ supabase }) {
         <div style={wc.logBox}>
           <div style={{ ...wc.lbl, marginBottom: 14 }}>Log this workout</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            {['You', 'Wife'].map(p => <button key={p} style={wc.personBtn(person === p, p === 'You')} onClick={() => setPerson(p)}>{p}</button>)}
+            {['You', 'Ashslay'].map(p => <button key={p} style={wc.personBtn(person === p, p === 'You')} onClick={() => setPerson(p)}>{p}</button>)}
           </div>
           <input type="text" value={logNote} onChange={e => setLogNote(e.target.value)} style={wc.inputStyle} placeholder="Notes — how it felt, what you modified (optional)" />
           <button onClick={logWorkout} disabled={logging} style={{ ...wc.btn, width: '100%', background: logging ? '#1a1a1a' : '#1a3a1a', color: logging ? '#444' : '#6fcf6f', border: `1px solid ${logging ? '#2a2a2a' : '#2a4a2a'}` }}>
