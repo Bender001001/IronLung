@@ -706,7 +706,6 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
                 <button onClick={()=>logAIResult(true)} style={{...btnP,flex:1,fontSize:12}}>Log + save to DB</button>
               </div>
               <button onClick={()=>{setAiResult(null);setAiText("");setAiImg(null);startScan();}} style={{...btnGhost,width:"100%",textAlign:"center",fontSize:12,marginTop:6}}>+ Scan another item</button>
-              <button onClick={()=>{setAiResult(null);setAiText("");setAiImg(null);startScan();}} style={{...btnGhost,width:"100%",textAlign:"center",fontSize:12}}>+ Scan another item</button>
             </div>
           )}
         </div>
