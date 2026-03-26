@@ -599,6 +599,11 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
   const[completedDays,setCompletedDays]=useState({});
   const[showBWInput,setShowBWInput]=useState(false);
   const[bwInput,setBwInput]=useState("");
+  const[showGoalEdit,setShowGoalEdit]=useState(false);
+  const[goalBW,setGoalBW]=useState(()=>cache.get("goalBW")||"");
+  const[goalBF,setGoalBF]=useState(()=>cache.get("goalBF")||"");
+  const[goalBWInput,setGoalBWInput]=useState("");
+  const[goalBFInput,setGoalBFInput]=useState("");
   const latMeas=meas&&meas.length>0?meas[meas.length-1]:null;
   const todayBW=latMeas?.measure_date===localDate()?latMeas?.bodyweight_lb:null;
   const lastBW=latMeas?.bodyweight_lb||null;
@@ -694,6 +699,49 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
           </button>
         )}
       </div>
+
+      {/* ── Cut progress tracker ── */}
+      {(goalBW||goalBF)?((()=>{
+        const curBW=lastBW||0;
+        const curBF=meas&&meas.length>0?(meas[meas.length-1].body_fat_pct||(meas[meas.length-1].waist_in&&meas[meas.length-1].neck_in&&meas[meas.length-1].height_in?navyBF(meas[meas.length-1].waist_in,meas[meas.length-1].neck_in,meas[meas.length-1].height_in):null)):null;
+        const startBW=meas&&meas.length>0?meas[0].bodyweight_lb:curBW;
+        const startBF=meas&&meas.length>0?(meas[0].body_fat_pct||(meas[0].waist_in&&meas[0].neck_in&&meas[0].height_in?navyBF(meas[0].waist_in,meas[0].neck_in,meas[0].height_in):null)):curBF;
+        const gBW=parseFloat(goalBW)||null;
+        const gBF=parseFloat(goalBF)||null;
+        const bwPct=gBW&&startBW&&startBW!==gBW?Math.min(100,Math.max(0,Math.round(((startBW-curBW)/(startBW-gBW))*100))):null;
+        const bfPct=gBF&&startBF&&parseFloat(startBF)!==gBF?Math.min(100,Math.max(0,Math.round(((parseFloat(startBF)-parseFloat(curBF||startBF))/(parseFloat(startBF)-gBF))*100))):null;
+        return(
+          <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{...hlbl,color:C.ac}}>Cut progress</span>
+              <button onClick={()=>{setGoalBWInput(String(goalBW));setGoalBFInput(String(goalBF));setShowGoalEdit(!showGoalEdit);}} style={{background:"none",border:"none",color:C.mt,fontSize:10,cursor:"pointer",padding:0}}>{showGoalEdit?"done":"edit goal"}</button>
+            </div>
+            {showGoalEdit?(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
+                <div><div style={{...hlbl,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 185"/></div>
+                <div><div style={{...hlbl,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {gBW&&curBW&&<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:11,color:C.tx}}>{curBW} lb <span style={{color:C.mt}}>→ {gBW} lb</span></span><span style={{fontSize:11,fontFamily:mono,color:bwPct===100?C.gn:C.ac}}>{bwPct}%</span></div><div style={{height:5,background:C.bd,borderRadius:3,overflow:"hidden"}}><div style={{width:`${bwPct||0}%`,height:"100%",background:bwPct===100?C.gn:C.ac,borderRadius:3,transition:"width 0.4s"}}/></div><div style={{fontSize:9,color:C.mt,marginTop:2}}>{curBW>gBW?`${(curBW-gBW).toFixed(1)} lb to go`:"Goal reached 🎯"}</div></div>}
+                {gBF&&curBF&&<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:11,color:C.tx}}>{parseFloat(curBF).toFixed(1)}% BF <span style={{color:C.mt}}>→ {gBF}%</span></span><span style={{fontSize:11,fontFamily:mono,color:bfPct===100?C.gn:C.am}}>{bfPct}%</span></div><div style={{height:5,background:C.bd,borderRadius:3,overflow:"hidden"}}><div style={{width:`${bfPct||0}%`,height:"100%",background:bfPct===100?C.gn:C.am,borderRadius:3,transition:"width 0.4s"}}/></div><div style={{fontSize:9,color:C.mt,marginTop:2}}>{parseFloat(curBF)>gBF?`${(parseFloat(curBF)-gBF).toFixed(1)}% to go`:"Goal reached 🎯"}</div></div>}
+              </div>
+            )}
+          </div>
+        );
+      })()):(
+        <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:14,fontSize:11,color:C.mt}}>+ Set cut goal (weight / BF%)</button>
+      )}
+      {showGoalEdit&&!goalBW&&!goalBF&&(
+        <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+          <div style={{...hlbl,marginBottom:8,color:C.ac}}>Set your goal</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><div style={{...hlbl,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{if(goalBWInput){cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 185" autoFocus/></div>
+            <div><div style={{...hlbl,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{if(goalBFInput){cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
+          </div>
+          <div style={{fontSize:10,color:C.mt,marginTop:8}}>Enter either or both. Progress tracks automatically from your Body logs.</div>
+        </div>
+      )}
 
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
         <span style={{fontSize:11,fontWeight:600,color:isDL?C.am:C.tx2,padding:"3px 9px",background:isDL?`${C.am}12`:C.sf2,borderRadius:6,border:`1px solid ${isDL?C.am+"33":C.bd}`,flexShrink:0}}>{weekType}</span>
@@ -924,6 +972,15 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   const latBF=latMeas?.body_fat_pct||(latMeas?.waist_in&&latMeas?.neck_in&&latMeas?.height_in?navyBF(latMeas.waist_in,latMeas.neck_in,latMeas.height_in):null)||19.5;
   const[calcW,setCalcW]=useState(String(latBW));const[calcH,setCalcH]=useState(String(latMeas?.height_in||71));const[calcAge,setCalcAge]=useState("30");const[calcBF,setCalcBF]=useState(String(parseFloat(latBF).toFixed(1)));const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(savedMt?.goalName||"Cut");const[calcP,setCalcP]=useState("1.18");const[calcF,setCalcF]=useState("0.37");const[useEmpirical,setUseEmpirical]=useState(true);const[empiricalMaint,setEmpiricalMaint]=useState(String(cache.get("empiricalMaint")||"3100"));const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
   const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);const scanLockRef=useRef(false);
+  const[showPlan,setShowPlan]=useState(false);
+  const[plan,setPlan]=useState(()=>cache.get("mealplan")||{breakfast:[],lunch:[],dinner:[],snacks:[]});
+  const[planSlot,setPlanSlot]=useState("breakfast");
+  const[planSearch,setPlanSearch]=useState("");
+  function addToPlan(f){setPlan(p=>{const n={...p,[planSlot]:[...p[planSlot],{id:f.id,name:f.name,protein_g:f.protein_g,carbs_g:f.carbs_g,fat_g:f.fat_g,calories:f.calories,portion_size:f.portion_size,portion_unit:f.portion_unit,portions:1}]};cache.set("mealplan",n);return n;});}
+  function removeFromPlan(slot,idx){setPlan(p=>{const n={...p,[slot]:p[slot].filter((_,i)=>i!==idx)};cache.set("mealplan",n);return n;});}
+  function planTotal(){const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];return all.reduce((a,m)=>({protein:a.protein+(m.protein_g||0)*m.portions,carbs:a.carbs+(m.carbs_g||0)*m.portions,fat:a.fat+(m.fat_g||0)*m.portions,calories:a.calories+(m.calories||0)*m.portions}),{protein:0,carbs:0,fat:0,calories:0});}
+  async function logPlanToday(){const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions});}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions});onPC();}}setShowPlan(false);}
+  const planFoods=foods.filter(f=>f.name.toLowerCase().includes(planSearch.toLowerCase())).slice(0,8);
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
   async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
@@ -933,7 +990,7 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   async function saveNewFood(){if(!nf.name||!nf.calories)return;const entry={name:nf.name,portion_size:parseFloat(nf.portion_size)||1,portion_unit:nf.portion_unit||"serving",protein_g:parseFloat(nf.protein_g)||0,carbs_g:parseFloat(nf.carbs_g)||0,fat_g:parseFloat(nf.fat_g)||0,calories:parseFloat(nf.calories)||0,category:nf.category};try{const{data}=await supabase.from("foods").insert(entry).select().single();if(data)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));}catch{addPending({type:"insert_food",data:entry});onPC();setFoods(p=>[...p,{...entry,id:`t_${Date.now()}`}].sort((a,b)=>a.name.localeCompare(b.name)));}setNf({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});setShowAdd(false);}
   const tot=log.reduce((a,m)=>({protein:a.protein+(m.protein||0)*m.portions,carbs:a.carbs+(m.carbs||0)*m.portions,fat:a.fat+(m.fat||0)*m.portions,calories:a.calories+(m.calories||0)*m.portions}),{protein:0,carbs:0,fat:0,calories:0});
   const flt=foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
-  function getSuggested(){const remPro=Math.max(0,mt.protein-Math.round(tot.protein));const remCal=Math.max(0,mt.calories-Math.round(tot.calories));if(remPro<10||foods.length===0)return[];return foods.filter(f=>f.protein_g>0&&f.calories>0).map(f=>{const proScore=f.protein_g/(f.calories||1);const calFit=Math.abs(f.calories-remCal*0.35);const proFit=Math.abs(f.protein_g-remPro*0.4);return{...f,score:proScore*100-calFit*0.01-proFit*0.05};}).sort((a,b)=>b.score-a.score).slice(0,3);}
+  function getSuggested(){const remPro=Math.max(0,mt.protein-Math.round(tot.protein));const remCal=Math.max(0,mt.calories-Math.round(tot.calories));if(remPro<10||foods.length===0)return[];return foods.filter(f=>f.protein_g>0&&f.calories>=50).map(f=>{const proScore=f.protein_g/(f.calories||1);const calFit=Math.abs(f.calories-remCal*0.35);const proFit=Math.abs(f.protein_g-remPro*0.4);return{...f,score:proScore*100-calFit*0.01-proFit*0.05};}).sort((a,b)=>b.score-a.score).slice(0,3);}
   const suggested=getSuggested();
   const remPro=Math.max(0,mt.protein-Math.round(tot.protein));
   const remCal=Math.max(0,mt.calories-Math.round(tot.calories));
@@ -1002,6 +1059,35 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
       {showAdd&&(<div style={{...card,marginBottom:12}}><div style={{...hlbl,marginBottom:10}}>Custom food</div><input type="text" value={nf.name} onChange={e=>setNf(p=>({...p,name:e.target.value}))} placeholder="Food name" style={{...inpL,marginBottom:8}}/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><input type="number" inputMode="decimal" value={nf.portion_size} onChange={e=>setNf(p=>({...p,portion_size:e.target.value}))} placeholder="Portion" style={inp}/><input type="text" value={nf.portion_unit} onChange={e=>setNf(p=>({...p,portion_unit:e.target.value}))} placeholder="Unit" style={inpL}/></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>{[{k:"protein_g",l:"Pro"},{k:"carbs_g",l:"Carb"},{k:"fat_g",l:"Fat"},{k:"calories",l:"Cal"}].map(f=><div key={f.k}><div style={{...hlbl,marginBottom:3}}>{f.l}</div><input type="number" value={nf[f.k]} onChange={e=>setNf(p=>({...p,[f.k]:e.target.value}))} style={inp}/></div>)}</div><div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>{["Protein","Carb","Fat","Snack","Meal","Misc"].map(c=><button key={c} onClick={()=>setNf(p=>({...p,category:c}))} style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${nf.category===c?C.ac:C.bd}`,background:nf.category===c?`${C.ac}12`:"transparent",color:nf.category===c?C.ac:C.mt,fontSize:10,cursor:"pointer"}}>{c}</button>)}</div><button onClick={saveNewFood} style={btnP}>Save Food</button></div>)}
       {showS&&(<div style={{...card,marginBottom:12}}><input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search foods..." style={{...inpL,marginBottom:8}} autoFocus/><div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>{["All","Protein","Carb","Fat","RTD Protein","Snack","Meal","Misc"].map(c=><button key={c} onClick={()=>setCat(c)} style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${cat===c?C.ac:C.bd}`,background:cat===c?`${C.ac}12`:"transparent",color:cat===c?C.ac:C.mt,fontSize:10,cursor:"pointer"}}>{c}</button>)}</div><div style={{maxHeight:280,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>{flt.length===0?<div style={{padding:"20px 0",textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:flt.map(f=><button key={f.id} onClick={()=>add(f)} style={{width:"100%",padding:"10px 4px",background:"none",border:"none",borderBottom:`1px solid ${C.bd}`,color:C.tx,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div><div style={{fontSize:10,color:C.mt,marginTop:1}}>{f.portion_size} {f.portion_unit}</div></div><div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:12,fontFamily:mono,color:C.gn,fontWeight:600}}>{f.protein_g}p</div><div style={{fontSize:9,color:C.mt,fontFamily:mono}}>{f.calories}cal</div></div></button>)}</div></div>)}
       {log.length>0&&(<div><div style={{...hlbl,marginBottom:8}}>Today</div>{log.map((m,i)=><div key={m.id||i} style={{background:C.sf,borderRadius:10,border:`1px solid ${C.bd}`,padding:"10px 12px",marginBottom:5,display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.food}</div><div style={{fontSize:10,color:C.mt,fontFamily:mono,marginTop:1}}>{Math.round(m.protein*m.portions)}p · {Math.round(m.carbs*m.portions)}c · {Math.round(m.fat*m.portions)}f · {Math.round(m.calories*m.portions)}cal</div></div><div style={{display:"flex",alignItems:"center",gap:3}}><button onClick={()=>up(i,m.portions-0.5)} style={tbtn}>-</button><span style={{fontSize:12,fontFamily:mono,width:24,textAlign:"center"}}>{m.portions}</span><button onClick={()=>up(i,m.portions+0.5)} style={tbtn}>+</button></div><button onClick={()=>rm(i)} style={{background:"none",border:"none",color:C.rd,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button></div>)}</div>)}
+      {/* ── Meal Plan ── */}
+      {(()=>{const pt=planTotal();const slots=["breakfast","lunch","dinner","snacks"];const slotColors={breakfast:C.am,lunch:C.gn,dinner:C.ac,snacks:C.bl};return(
+        <div style={{marginTop:8,marginBottom:8}}>
+          <button onClick={()=>setShowPlan(!showPlan)} style={{...btnGhost,width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderColor:showPlan?`${C.ac}44`:C.bd,color:showPlan?C.ac:C.mt}}>
+            <span style={{display:"flex",alignItems:"center",gap:8}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>{showPlan?"Close meal plan":"Plan meals"}</span>
+            {!showPlan&&[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks].length>0&&<span style={{fontSize:10,fontFamily:mono,color:C.gn}}>{Math.round(pt.protein)}p · {Math.round(pt.calories)}cal planned</span>}
+          </button>
+          {showPlan&&(<div style={{...card,marginTop:8}}>
+            <div style={{...hlbl,marginBottom:12,color:C.ac}}>Tomorrow's meals</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:14}}>{[{l:"Pro",v:Math.round(pt.protein),t:mt.protein,c:C.gn},{l:"Carb",v:Math.round(pt.carbs),t:mt.carbs,c:C.bl},{l:"Fat",v:Math.round(pt.fat),t:mt.fat,c:C.am},{l:"Cal",v:Math.round(pt.calories),t:mt.calories,c:C.ac}].map(m=>{const pct=Math.round((m.v/m.t)*100);return(<div key={m.l} style={{background:C.sf2,borderRadius:8,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,fontFamily:mono,color:pct>100?C.rd:m.c}}>{m.v}</div><div style={{fontSize:8,color:C.mt,marginTop:2}}>/{m.t}</div><div style={{width:"100%",height:3,background:C.bd,borderRadius:2,marginTop:4,overflow:"hidden"}}><div style={{width:`${Math.min(pct,100)}%`,height:"100%",background:m.c,borderRadius:2}}/></div><div style={{...hlbl,marginTop:3}}>{m.l}</div></div>);})}</div>
+            <div style={{display:"flex",gap:4,marginBottom:12}}>
+              {slots.map(s=><button key={s} onClick={()=>setPlanSlot(s)} style={{flex:1,padding:"6px 4px",borderRadius:7,border:`1px solid ${planSlot===s?slotColors[s]+"55":C.bd}`,background:planSlot===s?slotColors[s]+"14":"transparent",color:planSlot===s?slotColors[s]:C.mt,fontSize:10,fontWeight:planSlot===s?700:400,cursor:"pointer",textTransform:"capitalize"}}>{s}<span style={{display:"block",fontSize:9,color:C.mt,fontWeight:400}}>{plan[s].length} items</span></button>)}
+            </div>
+            {slots.map(slot=>plan[slot].length>0&&(<div key={slot} style={{marginBottom:10}}><div style={{...hlbl,marginBottom:5,color:slotColors[slot],textTransform:"capitalize"}}>{slot}</div>{plan[slot].map((f,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:C.sf2,borderRadius:8,marginBottom:4}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div><div style={{fontSize:10,color:C.mt,fontFamily:mono}}>{Math.round(f.protein_g*f.portions)}p · {Math.round(f.calories*f.portions)}cal</div></div><button onClick={()=>removeFromPlan(slot,i)} style={{background:"none",border:"none",color:C.rd,cursor:"pointer",fontSize:14,padding:"2px",flexShrink:0}}>×</button></div>))}</div>))}
+            <div style={{borderTop:`1px solid ${C.bd}`,paddingTop:12,marginTop:4}}>
+              <div style={{...hlbl,marginBottom:6}}>Add to <span style={{color:slotColors[planSlot],textTransform:"capitalize"}}>{planSlot}</span></div>
+              <input type="text" value={planSearch} onChange={e=>setPlanSearch(e.target.value)} placeholder="Search foods..." style={{...inpL,marginBottom:8,fontSize:13}} autoFocus={false}/>
+              {planSearch&&(<div style={{maxHeight:180,overflowY:"auto"}}>{planFoods.length===0?<div style={{padding:"10px 0",textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:planFoods.map(f=><button key={f.id} onClick={()=>{addToPlan(f);setPlanSearch("");}} style={{width:"100%",padding:"8px 4px",background:"none",border:"none",borderBottom:`1px solid ${C.bd}`,color:C.tx,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:12,fontWeight:500}}>{f.name}</div><div style={{fontSize:10,color:C.mt}}>{f.portion_size} {f.portion_unit}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,fontFamily:mono,color:C.gn,fontWeight:600}}>{f.protein_g}p</div><div style={{fontSize:9,color:C.mt,fontFamily:mono}}>{f.calories}cal</div></div></button>)}</div>)}
+            </div>
+            {[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks].length>0&&(
+              <div style={{display:"flex",gap:8,marginTop:12}}>
+                <button onClick={logPlanToday} style={{...btnP,flex:1,fontSize:12}}>Log all to today</button>
+                <button onClick={()=>{const empty={breakfast:[],lunch:[],dinner:[],snacks:[]};setPlan(empty);cache.set("mealplan",empty);}} style={{...btnGhost,padding:"11px 14px",flexShrink:0,color:C.rd,borderColor:`${C.rd}33`,fontSize:12}}>Clear</button>
+              </div>
+            )}
+          </div>)}
+        </div>
+      );})()} 
+
       {log.length===0&&!showS&&!showAdd&&<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>No meals logged today</div>}
     </div>
   );
@@ -1026,6 +1112,7 @@ function Body({meas,onAdd,online,onPC}){
           <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"16px 14px"}}><div style={{...hlbl,marginBottom:6}}>Bodyweight</div><div style={{fontSize:28,fontWeight:800,fontFamily:mono,lineHeight:1}}>{lat.bodyweight_lb??<span style={{color:C.mt}}>—</span>}</div><div style={{fontSize:11,color:C.mt,marginTop:4}}>lb{wtDelta&&<span style={{color:parseFloat(wtDelta)>0?C.am:C.gn,marginLeft:5}}>{wtDelta}</span>}</div></div>
           <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.ac}22`,padding:"16px 14px"}}><div style={{...hlbl,marginBottom:6}}>Body fat</div><div style={{fontSize:28,fontWeight:800,fontFamily:mono,color:C.ac,lineHeight:1}}>{latBF??<span style={{color:C.mt,fontSize:20}}>—</span>}</div><div style={{fontSize:11,color:C.mt,marginTop:4}}>%{bfDelta&&<span style={{color:parseFloat(bfDelta)>0?C.rd:C.gn,marginLeft:5}}>{bfDelta}</span>}</div></div>
         </div>
+        {lat.bodyweight_lb&&latBF&&(()=>{const lm=Math.round(lat.bodyweight_lb*(1-parseFloat(latBF)/100));const prevLm=prev?.bodyweight_lb&&(prev.body_fat_pct||(prev.waist_in&&prev.neck_in&&prev.height_in?navyBF(prev.waist_in,prev.neck_in,prev.height_in):null))?Math.round(prev.bodyweight_lb*(1-parseFloat(prev.body_fat_pct||(prev.waist_in&&prev.neck_in&&prev.height_in?navyBF(prev.waist_in,prev.neck_in,prev.height_in):null))/100)):null;const lmd=prevLm?((lm-prevLm)>0?`+${(lm-prevLm).toFixed(1)}`:(lm-prevLm).toFixed(1)):null;return(<div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.gn}22`,padding:"12px 14px",marginBottom:2}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{...hlbl,marginBottom:4,color:C.gn}}>Lean mass</div><div style={{fontSize:24,fontWeight:800,fontFamily:mono,color:C.gn,lineHeight:1}}>{lm} <span style={{fontSize:11,fontWeight:400,color:C.mt}}>lb</span></div><div style={{fontSize:10,color:C.mt,marginTop:3}}>The number that matters on a cut{lmd&&<span style={{color:parseFloat(lmd)>0?C.gn:C.rd,marginLeft:5}}>{lmd} lb</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:10,color:C.mt}}>= {lat.bodyweight_lb} lb</div><div style={{fontSize:10,color:C.mt}}>× {(100-parseFloat(latBF)).toFixed(1)}% lean</div></div></div></div>);})()}
         <div style={{fontSize:10,color:C.mt,marginBottom:12,padding:"4px 0",textAlign:"right"}}>{lat.measure_date}</div>
         <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:14,marginBottom:12}}>
           <div style={{...hlbl,marginBottom:12}}>Measurements</div>
@@ -1058,8 +1145,8 @@ function LineChart({points,color,height=90}){
       <polyline points={ptStr} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
       {points.map((p,i)=><circle key={i} cx={px(p.x)} cy={py(p.y)} r="3" fill={color} stroke={C.bg} strokeWidth="1.5"/>)}
       <text x={px(last.x)} y={py(last.y)-8} textAnchor="middle" fontSize="9" fill={color} fontFamily="JetBrains Mono,monospace" fontWeight="600">{last.y}</text>
-      <text x={px(points[0].x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">W{points[0].x}</text>
-      <text x={px(last.x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">W{last.x}</text>
+      <text x={px(points[0].x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">{points[0].label||`W${points[0].x}`}</text>
+      <text x={px(last.x)} y={height-2} textAnchor="middle" fontSize="8" fill={C.mt} fontFamily="JetBrains Mono,monospace">{last.label||`W${last.x}`}</text>
     </svg>
   );
 }
@@ -1073,7 +1160,7 @@ function Stats({meas,week,online,activeProgram}){
   const wd=meas.filter(m=>m.bodyweight_lb);
   const bfData=meas.filter(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return bf!==null;}).map((m,i)=>{const bf=parseFloat(m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null));return{x:i+1,y:bf};});
   const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
-  const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])].filter(m=>VOL_TARGETS[m]||vol[m]);
+  const allM=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])].filter(m=>vol[m]>0);
   const volD=allM.map(m=>({muscle:m,actual:vol[m]||0,min:VOL_TARGETS[m]?.min||0,max:VOL_TARGETS[m]?.max||20})).sort((a,b)=>b.actual-a.actual);
   const maxB=Math.max(...volD.map(v=>Math.max(v.actual,v.max)),1);
   const topPR=prs[0];const topRaw=prs.length?[...prs].sort((a,b)=>b.weight-a.weight)[0]:null;
