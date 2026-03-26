@@ -177,7 +177,7 @@ function MuscleDiagram({muscle, color, imageUrl}){
           <img
             src={imageUrl}
             alt={muscle}
-            style={{width:"100%",display:"block",mixBlendMode:"screen"}}
+            style={{width:"100%",display:"block"}}
             onError={e=>{e.target.style.display="none";}}
           />
         </div>
@@ -312,7 +312,14 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC}){
   async function loadHistory(exerciseId){try{const{data}=await supabase.from("workout_sets").select("weight_lb,reps,workout_sessions(week_number)").eq("exercise_id",exerciseId).order("created_at",{ascending:true});if(data){const byWeek={};data.forEach(s=>{const wk=s.workout_sessions?.week_number;if(!wk)return;if(!byWeek[wk])byWeek[wk]={maxW:0,totalReps:0,sets:0};byWeek[wk].maxW=Math.max(byWeek[wk].maxW,s.weight_lb||0);byWeek[wk].totalReps+=s.reps||0;byWeek[wk].sets++;});const weeks=Object.entries(byWeek).map(([wk,d])=>({week:parseInt(wk),weight:d.maxW,avgReps:d.sets>0?(d.totalReps/d.sets).toFixed(1):0})).sort((a,b)=>a.week-b.week);setHistory({exerciseId,weeks});}}catch{}}
   async function init(){const ck=`session_${day.id}_${week}`;try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).limit(1);if(data?.[0]){setSid(data[0].id);const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}else{const{data:n}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType}).select().single();if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}}catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets);}else{const tid=`temp_${Date.now()}`;setSid(tid);addPending({type:"create_session",data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType}});onPC();}}}
   function gs(eid,sn){return sd[`${eid}-${sn}`]||{weight:0,reps:0};}
-  function ul(eid,sn,f,v){const k=`${eid}-${sn}`;setSd(p=>({...p,[k]:{...p[k],weight:p[k]?.weight||0,reps:p[k]?.reps||0,[f]:parseFloat(v)||0}}));}
+  const saveTimer=useRef({});
+  function ul(eid,sn,f,v){
+    const k=`${eid}-${sn}`;
+    setSd(p=>({...p,[k]:{...p[k],weight:p[k]?.weight||0,reps:p[k]?.reps||0,[f]:parseFloat(v)||0}}));
+    // Debounced auto-save — fires 800ms after last keystroke
+    clearTimeout(saveTimer.current[k]);
+    saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
+  }
   async function sv(eid,sn){if(!sid)return;const k=`${eid}-${sn}`,d=sd[k];if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,dbId:d.dbId};cache.set(ck,cached);
     try{if(d.dbId)await supabase.from("workout_sets").update({weight_lb:d.weight,reps:d.reps}).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,weight_lb:d.weight,reps:d.reps}).select().single();if(ins){setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}}
     catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
