@@ -78,7 +78,7 @@ function Timer({duration,onDismiss}){
       </div>
       <div style={{display:"flex",gap:4}}>
         {!done&&<button onClick={()=>addTime(30)} style={{...btnGhost,fontSize:11,padding:"5px 8px"}}>+30s</button>}
-        <button onClick={onDismiss} style={{...btnGhost,fontSize:11,padding:"5px 10px",fontWeight:600,color:done?C.gn:C.mt,borderColor:done?`${C.gn}33`:C.bd,background:done?`${C.gn}12`:C.sf}}>{done?"Continue":"Skip"}</button>
+        <button onClick={onDismiss} style={{...btnGhost,fontSize:11,padding:"5px 10px",fontWeight:600,color:done?C.gn:C.mt,borderColor:done?`${C.gn}33`:C.bd,background:done?`${C.gn}12`:C.sf}}>{done?"Done":"Skip"}</button>
       </div>
     </div>
   );
@@ -568,7 +568,7 @@ function MuscleDiagram({muscle,color,imageUrl}){
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
         <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>{muscle}</div>
         <div style={{width:160}}>
-          <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block"}} onError={e=>{e.target.style.display="none";}}/>
+          <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block",background:C.bg}} onError={e=>{e.target.style.display="none";}}/>
         </div>
       </div>
     );
@@ -835,7 +835,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
         <div style={{flex:1,minWidth:0}}><div style={{fontSize:18,fontWeight:700}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} · {weekType} · {progName}</div></div>
         <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:comp===100?C.gn:comp>0?C.am:C.mt}}>{comp}%</div>{saved&&<div style={{fontSize:8,color:C.gn,fontFamily:mono,marginTop:1}}>{saved}</div>}</div>
       </div>
-      <div style={{width:"100%",height:4,background:C.bd,borderRadius:2,marginBottom:10,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:2,transition:"width 0.3s"}}/></div>
+      <div style={{width:"100%",height:6,background:C.bd,borderRadius:3,marginBottom:10,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:3,transition:"width 0.3s"}}/></div>
       <div style={{marginBottom:12,position:"relative"}}>
         <textarea value={notes} onChange={e=>setNotes(e.target.value)} onBlur={e=>saveNotes(e.target.value)} placeholder="Session notes — how you felt, anything off, PRs to remember..." style={{...inpL,height:notes?68:38,resize:"none",padding:"9px 12px",lineHeight:1.5,fontSize:12,color:C.tx,transition:"height 0.2s",fontFamily:sans}}/>
         {notesSaved&&<span style={{position:"absolute",right:10,bottom:8,fontSize:9,color:C.gn,fontFamily:mono}}>saved</span>}
@@ -906,7 +906,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
                     return(<div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 40px",gap:5,marginBottom:5,alignItems:"center"}}><div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div><input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={inp}/><input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/><div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div></div>);
                   })}
-                  {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnS,marginTop:6}}>Next exercise</button>}
+                  {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
                 </div>
               )}
             </div>
