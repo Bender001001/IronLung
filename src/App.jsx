@@ -167,14 +167,13 @@ const MUSCLE_MAP = {
 function MuscleDiagram({muscle, color, imageUrl}){
   const col = color || C.ac;
 
-  // If we have a custom Gemini image, show that
   if(imageUrl){
     return(
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
         <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
           {muscle}
         </div>
-        <div style={{width:160,position:"relative"}}>
+        <div style={{width:160}}>
           <img
             src={imageUrl}
             alt={muscle}
@@ -186,7 +185,6 @@ function MuscleDiagram({muscle, color, imageUrl}){
     );
   }
 
-  // Fall back to library diagram if no image
   const info = MUSCLE_MAP[muscle];
   if(!info) return null;
 
@@ -707,6 +705,7 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
                 <button onClick={()=>logAIResult(false)} style={{...btnS,flex:1}}>Log only</button>
                 <button onClick={()=>logAIResult(true)} style={{...btnP,flex:1,fontSize:12}}>Log + save to DB</button>
               </div>
+              <button onClick={()=>{setAiResult(null);setAiText("");setAiImg(null);startScan();}} style={{...btnGhost,width:"100%",textAlign:"center",fontSize:12,marginTop:6}}>+ Scan another item</button>
               <button onClick={()=>{setAiResult(null);setAiText("");setAiImg(null);startScan();}} style={{...btnGhost,width:"100%",textAlign:"center",fontSize:12}}>+ Scan another item</button>
             </div>
           )}
