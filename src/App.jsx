@@ -7,6 +7,8 @@ function localDate(){const d=new Date();return`${d.getFullYear()}-${String(d.get
 function addPending(op){const q=getPending();q.push({...op,ts:Date.now()});cache.set("pending",q);}
 async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
 
+let flushing=false;
+
 const C={bg:"#111113",sf:"#19191d",sf2:"#222228",sf3:"#27272e",bd:"#2c2c34",bd2:"#38383f",tx:"#cdcdd0",tx2:"#9898a4",mt:"#6b6b76",ac:"#7c8aff",gn:"#5cb87a",rd:"#d4544e",am:"#c9a84c",bl:"#5b9bd5"};
 const mono="'JetBrains Mono',monospace",sans="'DM Sans',sans-serif";
 
@@ -487,7 +489,6 @@ export default function App(){
       const{data:d,error:dE}=await supabase.from("training_days").select("*,training_day_exercises(*,exercises(*))").eq("program_id",activeProgram).order("day_order");
       if(dE)throw dE;
       if(d){
-        // FIX: imageUrl restored in exercise mapping
         const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>({id:t.exercises.id,name:t.exercises.name,sets:t.default_sets,repMin:t.exercises.rep_min,repMax:t.exercises.rep_max,increment:parseFloat(t.exercises.increment_lb)||2.5,category:t.exercises.category,cues:t.exercises.cues,muscle:t.exercises.primary_muscle,video:t.exercises.video_url,imageUrl:t.exercises.image_url}))}));
         setDays(f);cache.set(`days_${activeProgram}`,f);
       }
@@ -559,9 +560,25 @@ const MUSCLE_MAP={
   "Abductors":{slugs:["abductors"],side:"front"},
 };
 
-// FIX: imageUrl restored — shows PNG first, falls back to react-body-highlighter
+// FIX: SVG body model first (no checkered bg), imageUrl only as fallback
 function MuscleDiagram({muscle,color,imageUrl}){
   const col=color||C.ac;
+  const info=MUSCLE_MAP[muscle];
+
+  if(info){
+    const isFront=info.side==="front";
+    const activeData=[{name:muscle,muscles:info.slugs,frequency:1}];
+    return(
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+        <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
+          {muscle} · {isFront?"Front":"Back"}
+        </div>
+        <div style={{width:90}}>
+          <Model data={activeData} style={{width:"100%"}} highlightedColors={[col]} bodyColor="#45454f" type={isFront?"anterior":"posterior"}/>
+        </div>
+      </div>
+    );
+  }
 
   if(imageUrl){
     return(
@@ -574,20 +591,7 @@ function MuscleDiagram({muscle,color,imageUrl}){
     );
   }
 
-  const info=MUSCLE_MAP[muscle];
-  if(!info)return null;
-  const isFront=info.side==="front";
-  const activeData=[{name:muscle,muscles:info.slugs,frequency:1}];
-  return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-      <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
-        {muscle} · {isFront?"Front":"Back"}
-      </div>
-      <div style={{width:90}}>
-        <Model data={activeData} style={{width:"100%"}} highlightedColors={[col]} bodyColor="#45454f" type={isFront?"anterior":"posterior"}/>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online,activeProgram,switchProgram,meas,onAddMeas}){
@@ -817,7 +821,6 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[history,setHistory]=useState(null);
   const[notes,setNotes]=useState("");
   const[notesSaved,setNotesSaved]=useState(false);
-  // FIX: debounced save timer restored
   const saveTimer=useRef({});
   const sdRef=useRef({});
   sdRef.current=sd;
@@ -859,7 +862,6 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   async function saveNotes(val){setNotes(val);if(!sid||String(sid).startsWith("temp_"))return;try{await supabase.from("workout_sessions").update({notes:val}).eq("id",sid);setNotesSaved(true);setTimeout(()=>setNotesSaved(false),1500);}catch{}}
   function gs(eid,sn){return sd[`${eid}-${sn}`]||{weight:0,reps:0};}
 
-  // FIX: debounced save restored — 800ms after last keystroke
   function ul(eid,sn,f,v){
     const k=`${eid}-${sn}`;
     setSd(p=>({...p,[k]:{...p[k],weight:p[k]?.weight||0,reps:p[k]?.reps||0,[f]:parseFloat(v)||0}}));
@@ -892,7 +894,6 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
       </div>
       {isDeload&&<div style={{padding:"8px 12px",marginBottom:12,background:`${C.am}10`,border:`1px solid ${C.am}22`,borderRadius:8,fontSize:11,color:C.am}}>Deload week — 2 sets at ~60%</div>}
 
-      {/* FIX: empty-exercises guard for APEX debugging */}
       {day.exercises.length===0&&(
         <div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13,background:C.sf2,borderRadius:12,border:`1px solid ${C.bd}`}}>
           No exercises found for {day.name} in {progName}.<br/>
@@ -923,7 +924,6 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     {ex.video&&<a href={ex.video} target="_blank" rel="noopener noreferrer" style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.ac,fontSize:11,textDecoration:"none",flexShrink:0}}>Watch</a>}
                     <button onClick={()=>history?.exerciseId===ex.id?setHistory(null):loadHistory(ex.id)} style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${history?.exerciseId===ex.id?`${C.ac}44`:C.bd}`,borderRadius:8,color:history?.exerciseId===ex.id?C.ac:C.mt,fontSize:11,cursor:"pointer",flexShrink:0}}>History</button>
                   </div>
-                  {/* FIX: imageUrl passed through to MuscleDiagram */}
                   <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
                     <MuscleDiagram muscle={ex.muscle} color={pg?.up?C.gn:pg?.deload?C.am:C.ac} imageUrl={ex.imageUrl}/>
                   </div>
@@ -1047,7 +1047,6 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>{[{l:"Protein",v:"protein_g",c:C.gn},{l:"Carbs",v:"carbs_g",c:C.bl},{l:"Fat",v:"fat_g",c:C.am},{l:"Calories",v:"calories",c:C.ac}].map(f=>(<div key={f.l}><div style={{...hlbl,color:f.c,marginBottom:3}}>{f.l}</div><input type="number" value={aiResult[f.v]} onChange={e=>setAiResult(p=>({...p,[f.v]:parseFloat(e.target.value)||0}))} style={{...inp,fontSize:13,borderColor:`${f.c}33`}}/></div>))}</div>
           {aiResult.notes&&<div style={{fontSize:10,color:C.mt,marginBottom:10,fontStyle:"italic"}}>{aiResult.notes}</div>}
           <div style={{display:"flex",gap:6,marginBottom:8}}><button onClick={()=>logAIResult(false)} style={{...btnS,flex:1}}>Log only</button><button onClick={()=>logAIResult(true)} style={{...btnP,flex:1,fontSize:12}}>Log + save to DB</button></div>
-          {/* FIX: scan another item button restored */}
           <button onClick={()=>{setAiResult(null);setAiText("");setAiImg(null);startScan();}} style={{...btnGhost,width:"100%",textAlign:"center",fontSize:12}}>+ Scan another item</button>
         </div>)}
       </div>)}
