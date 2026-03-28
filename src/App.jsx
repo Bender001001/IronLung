@@ -5,8 +5,7 @@ const cache={get(k){try{const v=localStorage.getItem(`il_${k}`);return v?JSON.pa
 function getPending(){return cache.get("pending")||[];}
 function localDate(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function addPending(op){const q=getPending();q.push({...op,ts:Date.now()});cache.set("pending",q);}
-let flushing=false;
-async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length){flushing=false;return 0;}let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
+async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
 
 const C={bg:"#111113",sf:"#19191d",sf2:"#222228",sf3:"#27272e",bd:"#2c2c34",bd2:"#38383f",tx:"#cdcdd0",tx2:"#9898a4",mt:"#6b6b76",ac:"#7c8aff",gn:"#5cb87a",rd:"#d4544e",am:"#c9a84c",bl:"#5b9bd5"};
 const mono="'JetBrains Mono',monospace",sans="'DM Sans',sans-serif";
@@ -528,7 +527,7 @@ export default function App(){
         {tabs.map(t=>{const active=tab===t.id;const color=active?C.ac:C.mt;return(
           <button key={t.id} onClick={()=>{setTab(t.id);if(t.id!=="train")setSelDay(null);}} style={{flex:1,padding:"8px 0",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,minHeight:48,justifyContent:"center",position:"relative"}}>
             {active&&<div style={{position:"absolute",top:0,left:"20%",right:"20%",height:2,background:C.ac,borderRadius:"0 0 2px 2px"}}/>}
-            <t.Icon c={color}/><span style={{fontSize:9,fontWeight:active?700:500,color,letterSpacing:"0.04em"}}>{t.label}</span>
+            <t.Icon c={color}/><span style={{fontSize:10,fontWeight:active?700:500,color,letterSpacing:"0.02em"}}>{t.label}</span>
           </button>);})}
       </div>
     </div>
@@ -753,7 +752,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
       {week%4===0&&!isDL&&!dismissedDL&&(
         <div style={{background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.am}}>Deload week?</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} is typically a deload in a 16-week block.</div></div>
-          <button onClick={()=>{cache.set("weekType","Deload");setWeekType("Deload");setDismissedDL(true);}} style={{padding:"6px 12px",background:`${C.am}18`,border:`1px solid ${C.am}44`,borderRadius:8,color:C.am,fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>Switch</button>
+          <button onClick={()=>{setWeekType("Deload");setDismissedDL(true);}} style={{padding:"6px 12px",background:`${C.am}18`,border:`1px solid ${C.am}44`,borderRadius:8,color:C.am,fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>Switch</button>
           <button onClick={()=>setDismissedDL(true)} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button>
         </div>
       )}
@@ -775,7 +774,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
           <div style={{marginBottom:14}}>
             <div style={{...hlbl,marginBottom:10}}>Week phase</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {WEEK_TYPES.map(t=><button key={t} onClick={()=>{cache.set("weekType",t);setWeekType(t);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${weekType===t?(t==="Deload"?C.am:C.ac):C.bd}`,background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent",color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt,fontSize:12,fontWeight:weekType===t?600:400,cursor:"pointer"}}>{t}</button>)}
+              {WEEK_TYPES.map(t=><button key={t} onClick={()=>setWeekType(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${weekType===t?(t==="Deload"?C.am:C.ac):C.bd}`,background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent",color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt,fontSize:12,fontWeight:weekType===t?600:400,cursor:"pointer"}}>{t}</button>)}
             </div>
             {isDL&&<div style={{fontSize:11,color:C.am,marginTop:8,padding:"6px 10px",background:`${C.am}08`,borderRadius:6}}>Deload: 2 sets at ~60% weight</div>}
           </div>
@@ -873,7 +872,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
     setSaved(new Date().toLocaleTimeString());}
 
-  function fill(eid,n,w){const u={};for(let i=1;i<=n;i++){const k=`${eid}-${i}`;u[k]={...sdRef.current[k],weight:w,reps:sdRef.current[k]?.reps||0,dbId:sdRef.current[k]?.dbId};}sdRef.current={...sdRef.current,...u};setSd(p=>({...p,...u}));for(let i=1;i<=n;i++)sv(eid,i);}
+  function fill(eid,n,w){const u={};for(let i=1;i<=n;i++){const k=`${eid}-${i}`;u[k]={...sdRef.current[k],weight:w,reps:sd[k]?.reps||0,dbId:sd[k]?.dbId};}setSd(p=>({...p,...u}));}
   function done(eid,n){let c=0;for(let i=1;i<=n;i++)if(sd[`${eid}-${i}`]?.reps>0)c++;return c;}
   const totalS=day.exercises.reduce((s,e)=>s+eff(e),0),doneS=day.exercises.reduce((s,e)=>s+done(e.id,eff(e)),0),comp=totalS>0?Math.round((doneS/totalS)*100):0;
   function startTimer(){setShowTimer(true);setTimerKey(k=>k+1);}
@@ -884,10 +883,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
         <button onClick={onBack} style={sbtn}>‹</button>
         <div style={{flex:1,minWidth:0}}><div style={{fontSize:18,fontWeight:700}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} · {weekType} · {progName}</div></div>
-        <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:comp===100?C.gn:comp>0?C.am:C.mt}}>{comp}%</div>{saved&&<div style={{fontSize:8,color:C.gn,fontFamily:mono,marginTop:1}}>{saved}</div>}</div>
+        <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:comp===100?C.gn:comp>0?C.am:C.mt}}>{comp}%</div><div style={{fontSize:8,color:C.mt,fontFamily:mono,marginTop:1,textTransform:"uppercase",letterSpacing:"0.06em"}}>{comp===100?"complete":"done"}</div>{saved&&<div style={{fontSize:8,color:C.gn,fontFamily:mono,marginTop:1}}>{saved}</div>}</div>
       </div>
       <div style={{width:"100%",height:6,background:C.bd,borderRadius:3,marginBottom:10,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:3,transition:"width 0.3s"}}/></div>
-      {showTimer&&<Timer key={timerKey} duration={restDur} onDismiss={()=>setShowTimer(false)}/>}
       <div style={{marginBottom:12,position:"relative"}}>
         <textarea value={notes} onChange={e=>setNotes(e.target.value)} onBlur={e=>saveNotes(e.target.value)} placeholder="Session notes — how you felt, anything off, PRs to remember..." style={{...inpL,height:notes?68:38,resize:"none",padding:"9px 12px",lineHeight:1.5,fontSize:12,color:C.tx,transition:"height 0.2s",fontFamily:sans}}/>
         {notesSaved&&<span style={{position:"absolute",right:10,bottom:8,fontSize:9,color:C.gn,fontFamily:mono}}>saved</span>}
@@ -908,7 +906,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           const todayWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w):null;
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
-              <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
+              <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);setShowTimer(false);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
                 <div style={{fontFamily:mono,fontSize:13,fontWeight:700,color:all?C.gn:C.mt,width:22,textAlign:"center",flexShrink:0}}>{all?"✓":xi+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ex.name}</div>
@@ -921,7 +919,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
               {isE&&(
                 <div style={{padding:"0 14px 14px"}}>
                   <div style={{display:"flex",gap:6,marginBottom:10}}>
-                    <button onClick={()=>setShowCues(showCues===xi?null:xi)} style={{flex:1,padding:"8px 10px",background:C.sf2,border:`1px solid ${showCues===xi?`${C.ac}44`:C.bd}`,borderRadius:8,color:showCues===xi?C.tx:C.mt,fontSize:11,cursor:"pointer",textAlign:"left",whiteSpace:showCues===xi?"normal":"nowrap",overflow:showCues===xi?"visible":"hidden",textOverflow:showCues===xi?"clip":"ellipsis",lineHeight:showCues===xi?1.5:"normal"}}>{showCues===xi?ex.cues:"View cues"}</button>
+                    <button onClick={()=>setShowCues(showCues===xi?null:xi)} style={{flex:1,padding:"8px 12px",background:showCues===xi?`${C.ac}12`:"transparent",border:`1px solid ${showCues===xi?`${C.ac}44`:C.bd}`,borderRadius:8,color:showCues===xi?C.ac:C.mt,fontSize:11,cursor:"pointer",textAlign:"left",whiteSpace:showCues===xi?"normal":"nowrap",overflow:showCues===xi?"visible":"hidden",textOverflow:showCues===xi?"clip":"ellipsis",lineHeight:showCues===xi?1.5:"normal",display:"flex",alignItems:"center",gap:5}}>{showCues===xi?ex.cues:<><span style={{fontSize:10}}>📋</span> View cues</>}</button>
                     {ex.video&&<a href={ex.video} target="_blank" rel="noopener noreferrer" style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.ac,fontSize:11,textDecoration:"none",flexShrink:0}}>Watch</a>}
                     <button onClick={()=>history?.exerciseId===ex.id?setHistory(null):loadHistory(ex.id)} style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${history?.exerciseId===ex.id?`${C.ac}44`:C.bd}`,borderRadius:8,color:history?.exerciseId===ex.id?C.ac:C.mt,fontSize:11,cursor:"pointer",flexShrink:0}}>History</button>
                   </div>
@@ -949,15 +947,16 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <button onClick={()=>fill(ex.id,es,todayWeight||0)} style={{padding:"7px 12px",background:pg?.up?`${C.gn}10`:pg?.deload?`${C.am}10`:C.sf2,border:`1px solid ${pg?.up?`${C.gn}33`:pg?.deload?`${C.am}33`:C.bd}`,borderRadius:8,color:pg?.up?C.gn:pg?.deload?C.am:C.mt,fontSize:12,fontWeight:600,cursor:"pointer"}}>Fill {todayWeight||0}lb</button>
                     {pg?.up&&<button onClick={()=>fill(ex.id,es,pg.w)} style={{padding:"7px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer"}}>Keep {pg.w}lb</button>}
                   </div>
-                  <button onClick={startTimer} style={{width:"100%",padding:"9px",marginBottom:10,background:showTimer?`${C.ac}10`:C.sf2,border:`1px solid ${showTimer?C.ac:C.bd}`,borderRadius:8,color:showTimer?C.ac:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={showTimer?C.ac:C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                    {showTimer?`↺ Restart timer`:`Start rest timer (${Math.floor(restDur/60)}:${String(restDur%60).padStart(2,"0")})`}
-                  </button>
+                  {showTimer?<Timer key={timerKey} duration={restDur} onDismiss={()=>setShowTimer(false)}/>
+                  :<button onClick={startTimer} style={{width:"100%",padding:"9px",marginBottom:10,background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    Start rest timer ({Math.floor(restDur/60)}:{String(restDur%60).padStart(2,"0")})
+                  </button>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 40px",gap:5,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
                     return(<div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 40px",gap:5,marginBottom:5,alignItems:"center"}}><div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div><input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={inp}/><input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/><div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div></div>);
                   })}
-                  {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
+                  {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
                 </div>
               )}
             </div>
