@@ -17,7 +17,7 @@ export default async function handler(req, res) {
       "gemini-1.5-flash-001","gemini-1.5-flash","gemini-1.0-pro",
     ];
     try {
-      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { signal: AbortSignal.timeout(5000) });
       if (listRes.ok) {
         const listData = await listRes.json();
         const available = (listData.models || [])
@@ -30,7 +30,8 @@ export default async function handler(req, res) {
         if (fallback) { cachedModel = fallback; return fallback; }
       }
     } catch {}
-    return "gemini-2.5-flash";
+    cachedModel = "gemini-2.5-flash";
+    return cachedModel;
   }
 
   const model = await findModel();
@@ -54,8 +55,9 @@ Food: ${text || "See image"}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 2048 },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
         }),
+        signal: AbortSignal.timeout(9000),
       }
     );
 
