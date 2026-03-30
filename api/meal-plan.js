@@ -82,7 +82,7 @@ Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target 
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.3,
-            maxOutputTokens: 2048,
+            maxOutputTokens: 8192,
             responseMimeType: "application/json",
             responseSchema
           }
