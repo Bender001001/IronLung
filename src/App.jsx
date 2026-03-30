@@ -652,7 +652,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
   const wcColor=wc===100?C.gn:wc>50?C.ac:wc>0?C.am:C.mt;
 
   return(
-    <div style={{padding:"24px 16px"}}>
+    <div style={{padding:"20px 16px"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
         <div style={{fontSize:22,fontWeight:800,letterSpacing:"0.01em"}}>IRON<span style={{color:C.ac}}>LOG</span></div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -675,9 +675,9 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         })}
       </div>
 
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 14px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"10px 14px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10}}>
         <div style={{flex:1}}>
-          <div style={{...hlbl,marginBottom:3}}>Bodyweight</div>
+          <div style={{...lbl,marginBottom:3}}>Bodyweight</div>
           <div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:todayBW?C.gn:C.tx}}>
             {todayBW?`${todayBW} lb`:lastBW?`${lastBW} lb`:<span style={{color:C.mt}}>—</span>}
             {todayBW&&<span style={{fontSize:10,color:C.gn,marginLeft:6,fontWeight:500}}>logged today</span>}
@@ -708,15 +708,15 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         const bwPct=gBW&&startBW&&startBW!==gBW?Math.min(100,Math.max(0,Math.round(((startBW-curBW)/(startBW-gBW))*100))):null;
         const bfPct=gBF&&startBF&&parseFloat(startBF)!==gBF?Math.min(100,Math.max(0,Math.round(((parseFloat(startBF)-parseFloat(curBF||startBF))/(parseFloat(startBF)-gBF))*100))):null;
         return(
-          <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+          <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span style={{...hlbl,color:C.ac}}>Cut progress</span>
+              <span style={{...lbl,color:C.ac}}>Cut progress</span>
               <button onClick={()=>{setGoalBWInput(String(goalBW));setGoalBFInput(String(goalBF));setShowGoalEdit(!showGoalEdit);}} style={{background:"none",border:"none",color:C.mt,fontSize:10,cursor:"pointer",padding:0}}>{showGoalEdit?"done":"edit goal"}</button>
             </div>
             {showGoalEdit?(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
-                <div><div style={{...hlbl,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 185"/></div>
-                <div><div style={{...hlbl,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
+                <div><div style={{...lbl2,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 185"/></div>
+                <div><div style={{...lbl2,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -730,17 +730,17 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:14,fontSize:11,color:C.mt}}>+ Set cut goal (weight / BF%)</button>
       )}
       {showGoalEdit&&!goalBW&&!goalBF&&(
-        <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
-          <div style={{...hlbl,marginBottom:8,color:C.ac}}>Set your goal</div>
+        <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+          <div style={{...lbl,marginBottom:8,color:C.ac}}>Set your goal</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <div><div style={{...hlbl,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{if(goalBWInput){cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 185" autoFocus/></div>
-            <div><div style={{...hlbl,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{if(goalBFInput){cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
+            <div><div style={{...lbl2,marginBottom:4}}>Goal weight (lb)</div><input type="number" inputMode="decimal" value={goalBWInput} onChange={e=>setGoalBWInput(e.target.value)} onBlur={()=>{if(goalBWInput){cache.set("goalBW",goalBWInput);setGoalBW(goalBWInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 185" autoFocus/></div>
+            <div><div style={{...lbl2,marginBottom:4}}>Goal BF%</div><input type="number" inputMode="decimal" value={goalBFInput} onChange={e=>setGoalBFInput(e.target.value)} onBlur={()=>{if(goalBFInput){cache.set("goalBF",goalBFInput);setGoalBF(goalBFInput);}}} style={{...inp,fontSize:13}} placeholder="e.g. 12"/></div>
           </div>
           <div style={{fontSize:10,color:C.mt,marginTop:8}}>Enter either or both. Progress tracks automatically from your Body logs.</div>
         </div>
       )}
 
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
         <span style={{fontSize:11,fontWeight:600,color:isDL?C.am:C.tx2,padding:"3px 9px",background:isDL?`${C.am}12`:C.sf2,borderRadius:6,border:`1px solid ${isDL?C.am+"33":C.bd}`,flexShrink:0}}>{weekType}</span>
         {wc!==null&&(<div style={{display:"flex",alignItems:"center",gap:6,flex:1}}><div style={{flex:1,height:3,background:C.bd,borderRadius:2,overflow:"hidden"}}><div style={{width:`${wc}%`,height:"100%",background:wcColor,borderRadius:2,transition:"width 0.4s"}}/></div><span style={{fontFamily:mono,fontSize:11,fontWeight:600,color:wcColor,minWidth:30,textAlign:"right"}}>{wc}%</span></div>)}
         {summary&&<button onClick={()=>setShowSum(!showSum)} style={{...btnGhost,fontSize:10,padding:"4px 10px",color:showSum?C.ac:C.mt,borderColor:showSum?`${C.ac}40`:C.bd,flexShrink:0}}>{showSum?"Close":"Summary"}</button>}
@@ -755,28 +755,28 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
       )}
 
       {showSum&&summary&&(
-        <div style={{...card,marginBottom:14}}>
-          <div style={{...hlbl,marginBottom:12}}>Week {week} recap — {PROGRAMS.find(p=>p.id===activeProgram)?.name}</div>
+        <div style={{...card,marginBottom:12}}>
+          <div style={{...lbl,marginBottom:12}}>Week {week} recap — {PROGRAMS.find(p=>p.id===activeProgram)?.name}</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
             {[{l:"Sessions",v:summary.sessionsLogged,c:C.ac},{l:"Done",v:summary.completedSets,c:C.bl},{l:"Total",v:summary.totalSets,c:C.mt},{l:"PRs",v:summary.prCount,c:summary.prCount>0?C.gn:C.mt}].map(s=>(
               <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:s.c}}>{s.v}</div><div style={{...hlbl,marginTop:3}}>{s.l}</div></div>
             ))}
           </div>
-          {Object.keys(summary.muscles).length>0&&<div><div style={{...hlbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const inR=tgt&&sets>=tgt.min&&sets<=tgt.max;const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:C.sf2,border:`1px solid ${inR?`${C.gn}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}><span style={{color:C.tx}}>{m}</span><span style={{color:inR?C.gn:C.mt}}>{sets}</span>{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
+          {Object.keys(summary.muscles).length>0&&<div><div style={{...lbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const inR=tgt&&sets>=tgt.min&&sets<=tgt.max;const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:C.sf2,border:`1px solid ${inR?`${C.gn}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}><span style={{color:C.tx}}>{m}</span><span style={{color:inR?C.gn:C.mt}}>{sets}</span>{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
         </div>
       )}
 
       {showCfg&&(
-        <div style={{...card,marginBottom:14}}>
+        <div style={{...card,marginBottom:12}}>
           <div style={{marginBottom:14}}>
-            <div style={{...hlbl,marginBottom:10}}>Week phase</div>
+            <div style={{...lbl,marginBottom:10}}>Week phase</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {WEEK_TYPES.map(t=><button key={t} onClick={()=>setWeekType(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${weekType===t?(t==="Deload"?C.am:C.ac):C.bd}`,background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent",color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt,fontSize:12,fontWeight:weekType===t?600:400,cursor:"pointer"}}>{t}</button>)}
             </div>
             {isDL&&<div style={{fontSize:11,color:C.am,marginTop:8,padding:"6px 10px",background:`${C.am}08`,borderRadius:6}}>Deload: 2 sets at ~60% weight</div>}
           </div>
           <div>
-            <div style={{...hlbl,marginBottom:10}}>Rest timer</div>
+            <div style={{...lbl,marginBottom:10}}>Rest timer</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {[60,90,120,150,180,240].map(t=><button key={t} onClick={()=>setRestDur(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${restDur===t?C.ac:C.bd}`,background:restDur===t?`${C.ac}15`:"transparent",color:restDur===t?C.ac:C.mt,fontSize:12,fontFamily:mono,cursor:"pointer"}}>{Math.floor(t/60)}:{String(t%60).padStart(2,"0")}</button>)}
             </div>
