@@ -105,7 +105,8 @@ Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target 
 
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      const scrubbed = raw.replace(/[\x00-\x1F\x7F]/g, " ");
+parsed = JSON.parse(scrubbed);
     } catch (parseErr) {
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
