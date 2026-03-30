@@ -98,7 +98,12 @@ Return ONLY valid JSON, no markdown, no explanation:
       return res.status(500).json({ error: "Empty response from Gemini" });
     }
 
-    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
+    const cleaned = raw
+  .replace(/```json\s*/gi, "")
+  .replace(/```\s*/gi, "")
+  .replace(/:\s*\.(\d)/g, ": 0.$1")
+  .replace(/(\d)\.\s*([,}\]])/g, "$1$2")
+  .trim();
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start === -1 || end === -1 || end <= start) {
