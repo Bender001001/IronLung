@@ -922,16 +922,16 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   </div>
                   {history?.exerciseId===ex.id&&history.weeks.length>0&&(
                     <div style={{background:C.sf2,borderRadius:10,padding:10,marginBottom:10}}>
-                      <div style={{...hlbl,marginBottom:8}}>Weight progression</div>
+                      <div style={{...lbl,marginBottom:8}}>Weight progression</div>
                       <div style={{display:"flex",alignItems:"flex-end",gap:3,height:50}}>
                         {history.weeks.slice(-12).map(w=>{const mn=Math.min(...history.weeks.map(x=>x.weight)),mx=Math.max(...history.weeks.map(x=>x.weight)),rn=mx-mn||1,h=((w.weight-mn)/rn)*40+8;return(<div key={w.week} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:7,fontFamily:mono,color:C.tx}}>{w.weight}</span><div style={{width:"100%",height:h,background:w.week===week?C.ac:`${C.ac}44`,borderRadius:2,maxWidth:24}}/><span style={{fontSize:6,color:C.mt}}>W{w.week}</span></div>);})}
                       </div>
                     </div>
                   )}
                   {pg&&(
-                    <div style={{padding:"10px 12px",marginBottom:10,background:pg.deload?`${C.am}08`:pg.up?`${C.gn}08`:C.sf2,border:`1px solid ${pg.deload?`${C.am}22`:pg.up?`${C.gn}22`:C.bd}`,borderRadius:10}}>
+                    <div style={{...card2,marginBottom:10,background:pg.deload?`${C.am}08`:pg.up?`${C.gn}08`:C.sf2,borderColor:pg.deload?`${C.am}44`:pg.up?`${C.gn}44`:C.bd2}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div><div style={{...hlbl,marginBottom:4}}>Today's weight</div><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:pg.deload?C.am:pg.up?C.gn:C.tx}}>{todayWeight}lb</div></div>
+                        <div><div style={{...lbl,marginBottom:4}}>Today's weight</div><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:pg.deload?C.am:pg.up?C.gn:C.tx}}>{todayWeight}lb</div></div>
                         <div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.mt}}>{pg.deload?"Deload 60%":pg.up?`+${ex.increment}lb`:"Hold"}</div><div style={{fontSize:10,color:C.mt,fontFamily:mono,marginTop:2}}>Last: {pg.w}lb · {typeof pg.r==="number"?pg.r.toFixed(1):pg.r} avg</div></div>
                       </div>
                     </div>
