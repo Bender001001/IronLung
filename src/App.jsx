@@ -665,7 +665,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         </div>
       </div>
 
-      <div style={{display:"flex",gap:4,marginBottom:14,background:C.sf2,borderRadius:10,padding:4}}>
+      <div style={{display:"flex",gap:4,marginBottom:12,background:C.sf2,borderRadius:10,padding:4}}>
         {PROGRAMS.map(p=>{
           const active=activeProgram===p.id;const isA=p.id===2;const activeColor=isA?C.am:C.ac;
           return(<button key={p.id} onClick={()=>switchProgram(p.id)} style={{flex:1,padding:"8px 0",borderRadius:7,border:"none",background:active?C.sf:"transparent",color:active?(isA?C.am:C.ac):C.mt,fontSize:12,fontWeight:active?700:400,cursor:"pointer",transition:"all 0.15s",position:"relative"}}>
@@ -727,7 +727,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
           </div>
         );
       })()):(
-        <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:14,fontSize:11,color:C.mt}}>+ Set cut goal (weight / BF%)</button>
+        <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:12,fontSize:11,color:C.mt}}>+ Set cut goal (weight / BF%)</button>
       )}
       {showGoalEdit&&!goalBW&&!goalBF&&(
         <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -747,7 +747,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
       </div>
 
       {week%4===0&&!isDL&&!dismissedDL&&(
-        <div style={{background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+        <div style={{background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.am}}>Deload week?</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} is typically a deload in a 16-week block.</div></div>
           <button onClick={()=>{setWeekType("Deload");setDismissedDL(true);}} style={{padding:"6px 12px",background:`${C.am}18`,border:`1px solid ${C.am}44`,borderRadius:8,color:C.am,fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>Switch</button>
           <button onClick={()=>setDismissedDL(true)} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button>
@@ -768,7 +768,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
 
       {showCfg&&(
         <div style={{...card,marginBottom:12}}>
-          <div style={{marginBottom:14}}>
+          <div style={{marginBottom:12}}>
             <div style={{...lbl,marginBottom:10}}>Week phase</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {WEEK_TYPES.map(t=><button key={t} onClick={()=>setWeekType(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${weekType===t?(t==="Deload"?C.am:C.ac):C.bd}`,background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent",color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt,fontSize:12,fontWeight:weekType===t?600:400,cursor:"pointer"}}>{t}</button>)}
