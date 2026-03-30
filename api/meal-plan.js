@@ -114,7 +114,7 @@ Return ONLY valid JSON, no markdown, no explanation:
     try {
       parsed = JSON.parse(cleaned.slice(start, end + 1));
     } catch (parseErr) {
-      return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: cleaned.slice(0, 300) });
+      return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: cleaned.slice(0, 500) });
     }
 
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
