@@ -33,7 +33,12 @@ export default async function handler(req, res) {
 
   const model = await findModel();
 
-  const foodList = foods.map(f =>
+  const topFoods = foods
+    .filter(f => f.calories > 0 && f.protein_g > 0)
+    .sort((a, b) => b.protein_g - a.protein_g)
+    .slice(0, 40);
+
+  const foodList = topFoods.map(f =>
     `${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
   ).join("\n");
 
@@ -106,7 +111,7 @@ Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target 
     let parsed;
     try {
       const scrubbed = raw.replace(/[\x00-\x1F\x7F]/g, " ");
-parsed = JSON.parse(scrubbed);
+      parsed = JSON.parse(scrubbed);
     } catch (parseErr) {
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
@@ -115,7 +120,7 @@ parsed = JSON.parse(scrubbed);
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
       parsed[slot] = parsed[slot].filter(item => {
-        const match = foods.find(f =>
+        const match = topFoods.find(f =>
           sanitize(f.name).toLowerCase() === sanitize(item.name || "").toLowerCase()
         );
         if (match) {
