@@ -240,7 +240,7 @@ function SkillsSection({ supabase }) {
               {final && <div style={{background:`${C.am}08`,border:`1px solid ${C.am}22`,borderRadius:8,padding:"12px 14px",marginBottom:10}}><div style={{color:C.am,fontSize:12,fontWeight:700}}>Final stage</div></div>}
               <div style={sc.stageBlock}>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
-                  {allStages.map(s => <div key={s.id} style={{ width: 20, height: 4, borderRadius: 2, background: s.stage_number <= stage.stage_number ? (isYou ? '#7ab8f5' : '#c9a0dc') : '#2a2a2a' }} />)}
+                  {allStages.map(s => <div key={s.id} style={{ width: 20, height: 4, borderRadius: 2, background: s.stage_number <= stage.stage_number ? (isYou ? '#7ab8f5' : '#c9a0dc') : C.bd }} />)}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
