@@ -340,31 +340,28 @@ function CaliWorkoutsSection({ supabase }) {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const focusColor = (focus) => ({ push: { bg: '#1a0d0d', border: '#4a1a1a', text: '#f07070' }, pull: { bg: '#0d1a0d', border: '#1a4a1a', text: '#70c070' }, core: { bg: '#0d0d1a', border: '#1a1a4a', text: '#7070f0' } })[focus] || { bg: '#1a1a1a', border: '#2a2a2a', text: '#aaa' };
 
-  const wc = {
-    page: { padding: '16px', maxWidth: 600, margin: '0 auto' },
-    toast: { position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' },
-    toastOk: { background: '#1e3a1e', border: '1px solid #3a6a3a', color: '#6fcf6f' },
-    toastErr: { background: '#3a1e1e', border: '1px solid #6a3a3a', color: '#f97070' },
-    lbl: { color: '#555', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 },
-    card: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginBottom: 10, cursor: 'pointer', transition: 'border-color 0.15s' },
-    pill: { display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700 },
-    btn: { padding: '8px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-    btnBack: { background: '#222', color: '#888', padding: '6px 12px', fontSize: 12 },
-    exCard: { background: '#161616', border: '1px solid #242424', borderRadius: 9, padding: '13px 15px', marginBottom: 8 },
-    exNotes: { color: '#aaa', fontSize: 12, lineHeight: 1.65, marginTop: 9, paddingTop: 9, borderTop: '1px solid #1e1e1e' },
-    scaledBox: { background: '#1a1a0a', border: '1px solid #2a2a18', borderRadius: 6, padding: '9px 12px', marginTop: 8 },
-    logBox: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginTop: 8, marginBottom: 16 },
-    personBtn: (active, isYou) => ({ flex: 1, padding: '8px', borderRadius: 7, cursor: 'pointer', fontSize: 13, fontWeight: 600, border: `1px solid ${active ? (isYou ? '#1a3a5c' : '#3c1a5c') : '#2a2a2a'}`, background: active ? (isYou ? '#0d1e33' : '#1e0d2e') : '#1e1e1e', color: active ? (isYou ? '#7ab8f5' : '#c9a0dc') : '#444' }),
-    inputStyle: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 6, color: '#fff', padding: '9px 12px', fontSize: 14, width: '100%', boxSizing: 'border-box', marginBottom: 10 },
-    logRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #1e1e1e' },
-    empty: { color: '#444', fontSize: 13, textAlign: 'center', padding: '32px 0' },
-  };
+  const wc={
+  page:{padding:"20px 16px",maxWidth:600,margin:"0 auto"},
+  toast:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 20px",borderRadius:8,fontSize:13,fontWeight:600,whiteSpace:"nowrap"},
+  toastOk:{background:`${C.gn}12`,border:`1px solid ${C.gn}33`,color:C.gn},
+  toastErr:{background:`${C.rd}12`,border:`1px solid ${C.rd}33`,color:C.rd},
+  card:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"14px 16px",marginBottom:8,cursor:"pointer",transition:"border-color 0.15s"},
+  pill:{display:"inline-block",padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700},
+  btn:{padding:"8px 16px",borderRadius:7,border:"none",cursor:"pointer",fontSize:13,fontWeight:600},
+  exCard:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:9,padding:"13px 15px",marginBottom:8},
+  exNotes:{color:C.tx2,fontSize:12,lineHeight:1.65,marginTop:9,paddingTop:9,borderTop:`1px solid ${C.bd}`},
+  scaledBox:{background:`${C.am}08`,border:`1px solid ${C.am}22`,borderRadius:6,padding:"9px 12px",marginTop:8},
+  logBox:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"14px 16px",marginTop:8,marginBottom:16},
+  personBtn:(active,isYou)=>({flex:1,padding:"8px",borderRadius:7,cursor:"pointer",fontSize:13,fontWeight:600,border:`1px solid ${active?(isYou?"#1a3a5c":"#3c1a5c"):C.bd}`,background:active?(isYou?"#0d1e33":"#1e0d2e"):C.sf2,color:active?(isYou?"#7ab8f5":"#c9a0dc"):C.mt}),
+  logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${C.bd}`},
+  empty:{color:C.mt,fontSize:13,textAlign:"center",padding:"32px 0"},
+};
 
   if (view === 'list') return (
     <div style={wc.page}>
       {toast && <div style={{ ...wc.toast, ...(toast.type === 'error' ? wc.toastErr : wc.toastOk) }}>{toast.msg}</div>}
-      <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Cali Workouts</div>
-      <div style={{ color: '#444', fontSize: 12, marginBottom: 16 }}>Push → Pull → Core → repeat. 20–25 min each.</div>
+      <div style={{fontSize:20,fontWeight:700,marginBottom:6}}>Cali Workouts</div>
+      <div style={{color:C.mt,fontSize:12,marginBottom:16}}>Push → Pull → Core → repeat. 20–25 min each.</div>
       {loading && <div style={wc.empty}>Loading...</div>}
       {!loading && templates.map(t => {
         const col = focusColor(t.focus);
@@ -374,31 +371,31 @@ function CaliWorkoutsSection({ supabase }) {
           <div key={t.id} style={wc.card} onClick={() => { setSelected(t); setView('detail'); setShowScaled({}); }} onMouseEnter={e => e.currentTarget.style.borderColor = '#3a3a3a'} onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2a2a'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
               <span style={{ ...wc.pill, background: col.bg, border: `1px solid ${col.border}`, color: col.text }}>{t.focus.toUpperCase()}</span>
-              <span style={{ color: '#555', fontSize: 12 }}>{t.duration_min} min</span>
+              <span style={{color:C.mt,fontSize:12}}>{t.duration_min} min</span>
             </div>
-            <div style={{ color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{t.name}</div>
-            <div style={{ color: '#666', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>{t.description}</div>
+            <div style={{color:C.tx,fontSize:15,fontWeight:700,marginBottom:4}}>{t.name}</div>
+            <div style={{color:C.mt,fontSize:12,lineHeight:1.5,marginBottom:8}}>{t.description}</div>
             <div style={{ display: 'flex', gap: 12 }}>
               {youLast && <span style={{ color: '#7ab8f5', fontSize: 11 }}>You — {youLast}</span>}
               {AshslayLast && <span style={{ color: '#c9a0dc', fontSize: 11 }}>Ashslay — {AshslayLast}</span>}
-              {!youLast && !AshslayLast && <span style={{ color: '#333', fontSize: 11 }}>Not done yet</span>}
+              {!youLast&&!AshslayLast&&<span style={{color:C.mt,fontSize:11}}>Not done yet</span>}
             </div>
           </div>
         );
       })}
       {logs.length > 0 && (
         <>
-          <div style={{ height: 1, background: '#1e1e1e', margin: '16px 0' }} />
-          <div style={wc.lbl}>Recent sessions</div>
+          <div style={{height:1,background:C.bd,margin:"16px 0"}}/>
+          <div style={{...lbl,marginBottom:8}}>Recent sessions</div>
           {logs.slice(0, 8).map(l => {
             const isYou = l.person === 'You';
             return (
               <div key={l.id} style={wc.logRow}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ ...wc.pill, ...(isYou ? { background: '#0d1e33', color: '#7ab8f5', border: '1px solid #1a3a5c' } : { background: '#1e0d2e', color: '#c9a0dc', border: '1px solid #3c1a5c' }) }}>{l.person}</span>
-                  <span style={{ color: '#aaa', fontSize: 12 }}>{l.cali_workout_templates?.name}</span>
+                  <span style={{color:C.tx2,fontSize:12}}>{l.cali_workout_templates?.name}</span>
                 </div>
-                <div style={{ color: '#444', fontSize: 11 }}>{l.logged_date}</div>
+                <div style={{color:C.mt,fontSize:11}}>{l.logged_date}</div>
               </div>
             );
           })}
@@ -414,24 +411,24 @@ function CaliWorkoutsSection({ supabase }) {
       <div style={wc.page}>
         {toast && <div style={{ ...wc.toast, ...(toast.type === 'error' ? wc.toastErr : wc.toastOk) }}>{toast.msg}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <button style={{ ...wc.btn, ...wc.btnBack }} onClick={() => setView('list')}>← Back</button>
+          <button style={btnGhost} onClick={()=>setView('list')}>← Back</button>
           <span style={{ ...wc.pill, background: col.bg, border: `1px solid ${col.border}`, color: col.text, marginRight: 4 }}>{selected.focus.toUpperCase()}</span>
-          <span style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>{selected.name}</span>
+          <span style={{color:C.tx,fontSize:16,fontWeight:700}}>{selected.name}</span>
         </div>
-        <div style={{ color: '#555', fontSize: 12, marginBottom: 16 }}>{selected.description}</div>
+        <div style={{color:C.mt,fontSize:12,marginBottom:16}}>{selected.description}</div>
         {exs.map((ex, i) => {
           const isWarmup = ex.order_num === 1;
           const isLast = i === exs.length - 1;
           const scaled = showScaled[ex.id];
           return (
-            <div key={ex.id} style={{ ...wc.exCard, background: isWarmup || isLast ? '#111' : '#161616' }}>
+            <div key={ex.id} style={{...wc.exCard,background:isWarmup||isLast?C.bg:C.sf}}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <div style={{ color: isWarmup || isLast ? '#666' : '#fff', fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{i + 1}. {ex.name}</div>
-                  {!isWarmup && <div style={{ color: '#555', fontSize: 12 }}>{ex.sets} sets · {ex.reps_or_duration}{ex.rest_sec > 0 ? ` · ${ex.rest_sec}s rest` : ''}</div>}
+                  <div style={{color:isWarmup||isLast?C.mt:C.tx,fontSize:13,fontWeight:700,marginBottom:3}}>{i+1}. {ex.name}</div>
+                  {!isWarmup&&<div style={{color:C.mt,fontSize:12}}>{ex.sets} sets · {ex.reps_or_duration}{ex.rest_sec>0?` · ${ex.rest_sec}s rest`:''}</div>}
                 </div>
                 {ex.scaled_notes && (
-                  <button onClick={() => setShowScaled(s => ({ ...s, [ex.id]: !s[ex.id] }))} style={{ ...wc.btn, padding: '4px 10px', fontSize: 11, background: scaled ? '#1a1a0a' : '#1e1e1e', color: scaled ? '#c8a84b' : '#555', border: `1px solid ${scaled ? '#2a2a18' : '#2a2a2a'}` }}>
+                  <button onClick={() => setShowScaled(s => ({ ...s, [ex.id]: !s[ex.id] }))} style={{...btnGhost,padding:"4px 10px",fontSize:11,background:scaled?`${C.am}08`:C.sf2,color:scaled?C.am:C.mt,borderColor:scaled?`${C.am}22`:C.bd}}>
                     {scaled ? 'Hide' : 'Scale'}
                   </button>
                 )}
@@ -439,20 +436,20 @@ function CaliWorkoutsSection({ supabase }) {
               {ex.beginner_notes && <div style={wc.exNotes}>{ex.beginner_notes}</div>}
               {scaled && ex.scaled_notes && (
                 <div style={wc.scaledBox}>
-                  <div style={{ color: '#c8a84b', fontSize: 11, fontWeight: 700, marginBottom: 4 }}>SCALING OPTIONS</div>
-                  <div style={{ color: '#bbb', fontSize: 12, lineHeight: 1.6 }}>{ex.scaled_notes}</div>
+                  <div style={{...lbl2,color:C.am,marginBottom:4}}>Scaling options</div>
+                  <div style={{color:C.tx2,fontSize:12,lineHeight:1.6}}>{ex.scaled_notes}</div>
                 </div>
               )}
             </div>
           );
         })}
         <div style={wc.logBox}>
-          <div style={{ ...wc.lbl, marginBottom: 14 }}>Log this workout</div>
+          <div style={{...lbl,marginBottom:14}}>Log this workout</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             {['You', 'Ashslay'].map(p => <button key={p} style={wc.personBtn(person === p, p === 'You')} onClick={() => setPerson(p)}>{p}</button>)}
           </div>
-          <input type="text" value={logNote} onChange={e => setLogNote(e.target.value)} style={wc.inputStyle} placeholder="Notes — how it felt, what you modified (optional)" />
-          <button onClick={logWorkout} disabled={logging} style={{ ...wc.btn, width: '100%', background: logging ? '#1a1a1a' : '#1a3a1a', color: logging ? '#444' : '#6fcf6f', border: `1px solid ${logging ? '#2a2a2a' : '#2a4a2a'}` }}>
+          <input type="text" value={logNote} onChange={e=>setLogNote(e.target.value)} style={{...inpL,marginBottom:10}} placeholder="Notes — how it felt, what you modified (optional)"/>
+          <button onClick={logWorkout} disabled={logging} style={{...btnS,background:logging?C.sf2:`${C.gn}12`,color:logging?C.mt:C.gn,border:`1px solid ${logging?C.bd:`${C.gn}33`}`}}>
             {logging ? 'Logging...' : `Log ${selected.name} — ${person}`}
           </button>
         </div>
