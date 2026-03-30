@@ -1,4 +1,3 @@
-// Cache the model name across warm serverless invocations
 let cachedModel = null;
 
 export default async function handler(req, res) {
@@ -42,7 +41,6 @@ export default async function handler(req, res) {
 
   const model = await findModel();
 
-  // Build a concise food list for the prompt
   const foodList = foods.map(f =>
     `${f.name}|${f.portion_size}${f.portion_unit}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
   ).join("\n");
@@ -88,8 +86,12 @@ Return ONLY valid JSON, no markdown, no explanation:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 2048, responseMimeType: "application/json" },,
-        }),
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 2048,
+            responseMimeType: "application/json"
+          }
+        })
       }
     );
 
@@ -119,19 +121,17 @@ Return ONLY valid JSON, no markdown, no explanation:
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message });
     }
 
-    // Validate food names against the actual food list
-    const foodNames = new Set(foods.map(f => f.name.toLowerCase()));
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
       parsed[slot] = parsed[slot].filter(item => {
         const match = foods.find(f => f.name.toLowerCase() === item.name?.toLowerCase());
         if (match) {
-          item.name = match.name; // normalize casing
+          item.name = match.name;
           item.portions = Math.max(0.25, Math.min(5, parseFloat(item.portions) || 1));
           return true;
         }
-        return false; // drop foods not in the database
+        return false;
       });
     }
 
