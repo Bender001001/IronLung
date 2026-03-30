@@ -166,27 +166,23 @@ function SkillsSection({ supabase }) {
     if (!error) { setProgress(p => ({ ...p, [`${selectedEx.id}_${person}`]: next.id })); showToast(`${person} → ${next.name}`); }
   };
 
-  const sc = {
-    page: { padding: '16px', maxWidth: 600, margin: '0 auto' },
-    toast: { position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' },
-    toastOk: { background: '#1e3a1e', border: '1px solid #3a6a3a', color: '#6fcf6f' },
-    toastErr: { background: '#3a1e1e', border: '1px solid #6a3a3a', color: '#f97070' },
-    sectionLabel: { color: '#555', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 },
-    exCard: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginBottom: 10, cursor: 'pointer', transition: 'border-color 0.15s' },
-    pill: { display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, marginRight: 6 },
-    pillYou: { background: '#0d1e33', color: '#7ab8f5', border: '1px solid #1a3a5c' },
-    pillAshslay: { background: '#1e0d2e', color: '#c9a0dc', border: '1px solid #3c1a5c' },
-    btn: { padding: '8px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-    btnBack: { background: '#222', color: '#888', padding: '6px 12px', fontSize: 12 },
-    btnGhost: { background: '#1e1e1e', color: '#666', border: '1px solid #2a2a2a', padding: '4px 10px', fontSize: 11 },
-    stageBlock: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginBottom: 12 },
-    instructions: { color: '#bbb', fontSize: 12, lineHeight: 1.7, marginTop: 10, paddingTop: 10, borderTop: '1px solid #222' },
-    progressBanner: { background: '#101e10', border: '1px solid #2a4a2a', borderRadius: 8, padding: '12px 14px', marginBottom: 10 },
-    logBox: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', marginBottom: 16 },
-    personBtn: (active, isYou) => ({ flex: 1, padding: '8px', borderRadius: 7, border: `1px solid ${active ? (isYou ? '#1a3a5c' : '#3c1a5c') : '#2a2a2a'}`, cursor: 'pointer', fontSize: 13, fontWeight: 600, background: active ? (isYou ? '#0d1e33' : '#1e0d2e') : '#1e1e1e', color: active ? (isYou ? '#7ab8f5' : '#c9a0dc') : '#444' }),
-    inputStyle: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 6, color: '#fff', padding: '9px 12px', fontSize: 14, width: '100%', boxSizing: 'border-box' },
-    logRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #1e1e1e' },
-    empty: { color: '#444', fontSize: 13, textAlign: 'center', padding: '32px 0' },
+  const sc={
+    page:{padding:"20px 16px",maxWidth:600,margin:"0 auto"},
+    toast:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 20px",borderRadius:8,fontSize:13,fontWeight:600,whiteSpace:"nowrap"},
+    toastOk:{background:`${C.gn}12`,border:`1px solid ${C.gn}33`,color:C.gn},
+    toastErr:{background:`${C.rd}12`,border:`1px solid ${C.rd}33`,color:C.rd},
+    exCard:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"14px 16px",marginBottom:8,cursor:"pointer",transition:"border-color 0.15s"},
+    pill:{display:"inline-block",padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:600,marginRight:6},
+    pillYou:{background:"#0d1e33",color:"#7ab8f5",border:"1px solid #1a3a5c"},
+    pillAshslay:{background:"#1e0d2e",color:"#c9a0dc",border:"1px solid #3c1a5c"},
+    btn:{padding:"8px 16px",borderRadius:7,border:"none",cursor:"pointer",fontSize:13,fontWeight:600},
+    stageBlock:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"14px 16px",marginBottom:12},
+    instructions:{color:C.tx2,fontSize:12,lineHeight:1.7,marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bd}`},
+    progressBanner:{background:`${C.gn}08`,border:`1px solid ${C.gn}22`,borderRadius:8,padding:"12px 14px",marginBottom:10},
+    logBox:{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"14px 16px",marginBottom:16},
+    logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${C.bd}`},
+    empty:{color:C.mt,fontSize:13,textAlign:"center",padding:"32px 0"},
+    personBtn:(active,isYou)=>({flex:1,padding:"8px",borderRadius:7,border:`1px solid ${active?(isYou?"#1a3a5c":"#3c1a5c"):C.bd}`,cursor:"pointer",fontSize:13,fontWeight:600,background:active?(isYou?"#0d1e33":"#1e0d2e"):C.sf2,color:active?(isYou?"#7ab8f5":"#c9a0dc"):C.mt}),
   };
 
   if (view === 'list') return (
@@ -200,8 +196,8 @@ function SkillsSection({ supabase }) {
         const AshslayStage = getCurrentStage(ex.id, 'Ashslay');
         return (
           <div key={ex.id} style={sc.exCard} onClick={() => openExercise(ex)} onMouseEnter={e => e.currentTarget.style.borderColor = '#3a3a3a'} onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2a2a'}>
-            <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{ex.name}</div>
-            {ex.description && <div style={{ color: '#666', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>{ex.description}</div>}
+            <div style={{color:C.tx,fontSize:14,fontWeight:600,marginBottom:4}}>{ex.name}</div>
+            {ex.description&&<div style={{color:C.mt,fontSize:12,lineHeight:1.5,marginBottom:8}}>{ex.description}</div>}
             <div>
               {youStage && <span style={{ ...sc.pill, ...sc.pillYou }}>You — {youStage.name}</span>}
               {AshslayStage && <span style={{ ...sc.pill, ...sc.pillAshslay }}>Ashslay — {AshslayStage.name}</span>}
@@ -218,8 +214,8 @@ function SkillsSection({ supabase }) {
       <div style={sc.page}>
         {toast && <div style={{ ...sc.toast, ...(toast.type === 'error' ? sc.toastErr : sc.toastOk) }}>{toast.msg}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <button style={{ ...sc.btn, ...sc.btnBack }} onClick={() => setView('list')}>← Back</button>
-          <span style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>{selectedEx.name}</span>
+          <button style={btnGhost} onClick={()=>setView('list')}>← Back</button>
+          <span style={{color:C.tx,fontSize:16,fontWeight:700}}>{selectedEx.name}</span>
         </div>
         {persons.map(person => {
           const isYou = person === 'You';
@@ -233,25 +229,25 @@ function SkillsSection({ supabase }) {
           const allStages = getExStages(selectedEx.id);
           return (
             <div key={person} style={{ marginBottom: 16 }}>
-              <div style={sc.sectionLabel}>{person}</div>
+              <div style={{...lbl,marginBottom:8}}>{person}</div>
               {ready && next && (
                 <div style={sc.progressBanner}>
-                  <div style={{ color: '#6fcf6f', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>✓ Target hit — ready to level up</div>
-                  <div style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>Next: <span style={{ color: '#ddd' }}>{next.name}</span></div>
-                  <button onClick={() => advanceStage(person)} style={{ ...sc.btn, background: '#1a3a1a', color: '#6fcf6f', fontSize: 12, padding: '7px 14px' }}>Advance →</button>
+                  <div style={{color:C.gn,fontSize:12,fontWeight:700,marginBottom:4}}>✓ Target hit — ready to level up</div>
+                  <div style={{color:C.mt,fontSize:12,marginBottom:10}}>Next: <span style={{color:C.tx}}>{next.name}</span></div>
+                  <button onClick={()=>advanceStage(person)} style={{...sc.btn,background:`${C.gn}14`,color:C.gn,border:`1px solid ${C.gn}33`,fontSize:12,padding:"7px 14px"}}>Advance →</button>
                 </div>
               )}
-              {final && <div style={{ ...sc.progressBanner, background: '#1a1a0a', borderColor: '#3a3a1a' }}><div style={{ color: '#f5c842', fontSize: 12, fontWeight: 700 }}>🏆 Final stage</div></div>}
+              {final && <div style={{background:`${C.am}08`,border:`1px solid ${C.am}22`,borderRadius:8,padding:"12px 14px",marginBottom:10}}><div style={{color:C.am,fontSize:12,fontWeight:700}}>Final stage</div></div>}
               <div style={sc.stageBlock}>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
                   {allStages.map(s => <div key={s.id} style={{ width: 20, height: 4, borderRadius: 2, background: s.stage_number <= stage.stage_number ? (isYou ? '#7ab8f5' : '#c9a0dc') : '#2a2a2a' }} />)}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: nameColor, marginBottom: 3 }}>Stage {stage.stage_number} — {stage.name}</div>
-                    <div style={{ color: '#555', fontSize: 12 }}>Target: {stage.target_value} {stage.target_unit} × {stage.target_sets} sets</div>
+                    <div style={{fontSize:13,fontWeight:700,color:nameColor,marginBottom:3}}>Stage {stage.stage_number} — {stage.name}</div>
+                    <div style={{color:C.mt,fontSize:12}}>Target: {stage.target_value} {stage.target_unit} × {stage.target_sets} sets</div>
                   </div>
-                  <button style={{ ...sc.btn, ...sc.btnGhost }} onClick={() => setOpenInstructions(openInstructions === instrKey ? null : instrKey)}>
+                  <button style={btnGhost} onClick={() => setOpenInstructions(openInstructions === instrKey ? null : instrKey)}>
                     {openInstructions === instrKey ? 'Hide' : 'How to'}
                   </button>
                 </div>
@@ -261,21 +257,21 @@ function SkillsSection({ supabase }) {
           );
         })}
         <div style={sc.logBox}>
-          <div style={{ ...sc.sectionLabel, marginBottom: 14 }}>Log a session</div>
+          <div style={{...lbl,marginBottom:14}}>Log a session</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             {['You', 'Ashslay'].map(p => <button key={p} style={sc.personBtn(logForm.person === p, p === 'You')} onClick={() => setLogForm(f => ({ ...f, person: p }))}>{p}</button>)}
           </div>
-          {(() => { const s = getCurrentStage(selectedEx.id, logForm.person); return s ? <div style={{ color: '#444', fontSize: 11, marginBottom: 12 }}>Stage {s.stage_number} — {s.name} · Target: {s.target_value} {s.target_unit}</div> : null; })()}
+          {(() => { const s = getCurrentStage(selectedEx.id, logForm.person); return s ? <div style={{color:C.mt,fontSize:11,marginBottom:12}}>Stage {s.stage_number} — {s.name} · Target: {s.target_value} {s.target_unit}</div> : null; })()}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-            <div><div style={{ color: '#666', fontSize: 11, marginBottom: 4 }}>{getCurrentStage(selectedEx.id, logForm.person)?.target_unit === 'seconds' ? 'Hold time (sec)' : 'Reps'}</div><input type="number" inputMode="decimal" value={logForm.value} onChange={e => setLogForm(f => ({ ...f, value: e.target.value }))} style={sc.inputStyle} placeholder="0" /></div>
-            <div><div style={{ color: '#666', fontSize: 11, marginBottom: 4 }}>Sets</div><input type="number" inputMode="numeric" value={logForm.sets} onChange={e => setLogForm(f => ({ ...f, sets: e.target.value }))} style={sc.inputStyle} /></div>
+            <div><div style={{...lbl2,marginBottom:4}}>{getCurrentStage(selectedEx.id, logForm.person)?.target_unit === 'seconds' ? 'Hold time (sec)' : 'Reps'}</div><input type="number" inputMode="decimal" value={logForm.value} onChange={e => setLogForm(f => ({ ...f, value: e.target.value }))} style={inpL} placeholder="0" /></div>
+            <div><div style={{...lbl2,marginBottom:4}}>Sets</div><input type="number" inputMode="numeric" value={logForm.sets} onChange={e => setLogForm(f => ({ ...f, sets: e.target.value }))} style={inpL} /></div>
           </div>
-          <input type="text" value={logForm.notes} onChange={e => setLogForm(f => ({ ...f, notes: e.target.value }))} style={{ ...sc.inputStyle, marginBottom: 12 }} placeholder="Notes (optional)" />
-          <button onClick={saveLog} disabled={saving || !logForm.value} style={{ ...sc.btn, width: '100%', background: saving || !logForm.value ? '#1a1a1a' : '#1a3a1a', color: saving || !logForm.value ? '#444' : '#6fcf6f', border: `1px solid ${saving || !logForm.value ? '#2a2a2a' : '#2a4a2a'}` }}>
+          <input type="text" value={logForm.notes} onChange={e => setLogForm(f => ({ ...f, notes: e.target.value }))} style={{ ...inpL, marginBottom: 12 }} placeholder="Notes (optional)" />
+          <button onClick={saveLog} disabled={saving || !logForm.value} style={{...btnS,background:saving||!logForm.value?C.sf2:`${C.gn}12`,color:saving||!logForm.value?C.mt:C.gn,border:`1px solid ${saving||!logForm.value?C.bd:`${C.gn}33`}`}}>
             {saving ? 'Saving...' : 'Log Session'}
           </button>
         </div>
-        <div style={sc.sectionLabel}>Recent logs</div>
+        <div style={{...lbl,marginBottom:8}}>Recent logs</div>
         {logs.length === 0 && <div style={sc.empty}>No logs yet.</div>}
         {logs.slice(0, 15).map(log => {
           const isYou = log.person === 'You';
@@ -284,11 +280,11 @@ function SkillsSection({ supabase }) {
             <div key={log.id} style={sc.logRow}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ ...sc.pill, ...(isYou ? sc.pillYou : sc.pillAshslay), marginRight: 0 }}>{log.person}</span>
-                <span style={{ color: '#aaa', fontSize: 12 }}>{log.skill_stages?.name}</span>
+                <span style={{color:C.tx2,fontSize:12}}>{log.skill_stages?.name}</span>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{log.achieved_value}{unit} × {log.sets_completed}</div>
-                <div style={{ color: '#444', fontSize: 11 }}>{log.logged_date}</div>
+                <div style={{color:C.tx,fontSize:13,fontWeight:600}}>{log.achieved_value}{unit} × {log.sets_completed}</div>
+                <div style={{color:C.mt,fontSize:11}}>{log.logged_date}</div>
               </div>
             </div>
           );
