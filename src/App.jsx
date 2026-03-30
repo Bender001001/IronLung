@@ -21,6 +21,9 @@ const btnS={width:"100%",padding:"11px",background:`${C.ac}12`,border:`1px solid
 const btnGhost={padding:"8px 14px",background:C.sf,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,fontWeight:500,cursor:"pointer"};
 const card={background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:16};
 const hlbl={fontSize:9,fontWeight:600,color:C.mt,textTransform:"uppercase",letterSpacing:"0.08em"};
+const lbl={fontSize:12,fontWeight:600,color:C.tx2,textTransform:"uppercase",letterSpacing:"0.06em"};
+const lbl2={fontSize:10,fontWeight:500,color:C.mt,textTransform:"uppercase",letterSpacing:"0.06em"};
+const card2={...card,border:`1px solid ${C.bd2}`};
 
 const PROGRAMS=[{id:1,name:"IRONCLAD"},{id:2,name:"APEX"}];
 const ROTATION=["Lower A","Upper A","Rest","Lower B","Upper B","Arms & Delts","Rest"];
