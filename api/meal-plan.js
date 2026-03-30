@@ -13,19 +13,9 @@ export default async function handler(req, res) {
 
   async function findModel() {
     if (cachedModel) return cachedModel;
-    const candidates = [
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-2.0-flash-001",
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-flash-latest",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro",
-    ];
+    const candidates = ["gemini-2.5-flash","gemini-2.0-flash","gemini-2.0-flash-001","gemini-1.5-flash-latest","gemini-1.5-flash"];
     try {
-      const listRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
-      );
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
       if (listRes.ok) {
         const listData = await listRes.json();
         const available = (listData.models || [])
@@ -38,46 +28,49 @@ export default async function handler(req, res) {
         if (fallback) { cachedModel = fallback; return fallback; }
       }
     } catch {}
-    return "gemini-2.5-flash";
+    return "gemini-2.0-flash";
   }
 
   const model = await findModel();
 
   const foodList = foods.map(f =>
-    `${sanitize(f.name)}|${f.portion_size}${f.portion_unit}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
+    `${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
   ).join("\n");
 
-  const prompt = `You are a meal planning AI for a bodybuilder on a cut. Create a full day meal plan using ONLY the foods listed below.
+  const mealItemSchema = {
+    type: "ARRAY",
+    items: {
+      type: "OBJECT",
+      properties: {
+        name: { type: "STRING" },
+        portions: { type: "INTEGER" }
+      },
+      required: ["name", "portions"]
+    }
+  };
 
-MACRO TARGETS:
-- Protein: ${targets.protein}g
-- Carbs: ${targets.carbs}g
-- Fat: ${targets.fat}g
-- Calories: ${targets.calories}
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      breakfast: mealItemSchema,
+      lunch: mealItemSchema,
+      dinner: mealItemSchema,
+      snacks: mealItemSchema,
+      notes: { type: "STRING" }
+    },
+    required: ["breakfast", "lunch", "dinner", "snacks", "notes"]
+  };
 
+  const prompt = `You are a meal planning AI for a bodybuilder on a cut.
+
+MACRO TARGETS: Protein ${targets.protein}g, Carbs ${targets.carbs}g, Fat ${targets.fat}g, Calories ${targets.calories}
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
 
-AVAILABLE FOODS (name|serving|protein|carbs|fat|calories):
+AVAILABLE FOODS (name|protein|carbs|fat|calories):
 ${foodList}
 
-RULES:
-- Use ONLY foods from the list above
-- Match food names EXACTLY as written above
-- Hit protein target within 10g, calories within 100
-- Use whole number portions only like 1, 2, 3 - never decimals
-- Spread protein across all meals
-- Include 4 meals: breakfast, lunch, dinner, snacks
-- Keep it practical
-
-Return ONLY valid JSON, no markdown, no explanation:
-{
-  "breakfast": [{"name": "exact food name", "portions": 1}],
-  "lunch": [{"name": "exact food name", "portions": 1}],
-  "dinner": [{"name": "exact food name", "portions": 1}],
-  "snacks": [{"name": "exact food name", "portions": 1}],
-  "totals": {"protein": 0, "carbs": 0, "fat": 0, "calories": 0},
-  "notes": "brief note"
-}`;
+Create a full day meal plan across breakfast, lunch, dinner, snacks using ONLY the foods above.
+Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target within 10g.`;
 
   try {
     const response = await fetch(
@@ -90,7 +83,8 @@ Return ONLY valid JSON, no markdown, no explanation:
           generationConfig: {
             temperature: 0.3,
             maxOutputTokens: 2048,
-            responseMimeType: "application/json"
+            responseMimeType: "application/json",
+            responseSchema
           }
         })
       }
@@ -109,21 +103,11 @@ Return ONLY valid JSON, no markdown, no explanation:
       return res.status(500).json({ error: "Empty response from Gemini" });
     }
 
-    const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      return res.status(500).json({ error: "No JSON found", detail: raw.slice(0, 200) });
-    }
-
     let parsed;
     try {
-      parsed = JSON.parse(raw.slice(start, end + 1));
+      parsed = JSON.parse(raw);
     } catch (parseErr) {
-      return res.status(500).json({
-        error: "Invalid JSON",
-        detail: parseErr.message,
-        raw: raw.slice(0, 500)
-      });
+      return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
 
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
@@ -136,6 +120,10 @@ Return ONLY valid JSON, no markdown, no explanation:
         if (match) {
           item.name = match.name;
           item.portions = Math.max(1, Math.min(5, Math.round(parseFloat(item.portions) || 1)));
+          item.protein_g = match.protein_g;
+          item.carbs_g = match.carbs_g;
+          item.fat_g = match.fat_g;
+          item.calories = match.calories;
           return true;
         }
         return false;
