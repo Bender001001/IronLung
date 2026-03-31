@@ -86,7 +86,7 @@ Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target 
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.3,
+            temperature: 0.5,
             maxOutputTokens: 8192,
             responseMimeType: "application/json",
             responseSchema
