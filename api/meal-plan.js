@@ -64,9 +64,8 @@ export default async function handler(req, res) {
       lunch: mealItemSchema,
       dinner: mealItemSchema,
       snacks: mealItemSchema,
-      notes: { type: "STRING" }
-    },
-    required: ["breakfast", "lunch", "dinner", "snacks", "notes"]
+      },
+    required: ["breakfast", "lunch", "dinner", "snacks"]
   };
 
   const prompt = `You are a meal planning AI for a bodybuilder on a cut.
