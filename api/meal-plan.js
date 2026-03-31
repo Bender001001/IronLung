@@ -40,8 +40,9 @@ export default async function handler(req, res) {
     .sort((a, b) => b.protein_g - a.protein_g)
     .slice(0, 25);
 
-  const foodList = topFoods.map(f =>
-    `${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
+  // Numbered index so Gemini returns a number, not a name
+  const foodList = topFoods.map((f, i) =>
+    `${i}|${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
   ).join("\n");
 
   const mealItemSchema = {
@@ -49,10 +50,10 @@ export default async function handler(req, res) {
     items: {
       type: "OBJECT",
       properties: {
-        name: { type: "STRING" },
+        index: { type: "INTEGER" },
         portions: { type: "INTEGER" }
       },
-      required: ["name", "portions"]
+      required: ["index", "portions"]
     }
   };
 
@@ -73,13 +74,13 @@ export default async function handler(req, res) {
 MACRO TARGETS: Protein ${targets.protein}g, Carbs ${targets.carbs}g, Fat ${targets.fat}g, Calories ${targets.calories}
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
 
-AVAILABLE FOODS (name|protein|carbs|fat|calories):
+AVAILABLE FOODS (index|name|protein|carbs|fat|calories):
 ${foodList}
 
-Create a full day meal plan across breakfast, lunch, dinner, snacks using ONLY the foods above.
-You MUST use the food names exactly as written in the list above — do not invent or abbreviate names.
-Use integer portions (1, 2, or 3). Hit protein target within 10g.
-Pick a variety of foods across the day — do not repeat the same food more than twice.`;
+Create a full day meal plan across breakfast, lunch, dinner, snacks.
+Use the index number (not the name) to reference each food.
+Use integer portions 1, 2, or 3 only.
+Hit protein target within 10g. Vary foods across meals.`;
 
   try {
     const response = await fetch(
@@ -91,7 +92,7 @@ Pick a variety of foods across the day — do not repeat the same food more than
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.5,
-            maxOutputTokens: 8192,
+            maxOutputTokens: 4096,
             responseMimeType: "application/json",
             responseSchema
           }
@@ -120,28 +121,28 @@ Pick a variety of foods across the day — do not repeat the same food more than
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
 
+    // Resolve index numbers back to actual food data
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
-      parsed[slot] = parsed[slot].filter(item => {
-        const itemName = sanitize(item.name || "").toLowerCase();
-        const match = topFoods.find(f => {
-          const foodName = sanitize(f.name).toLowerCase();
-          return foodName === itemName ||
-            foodName.includes(itemName) ||
-            itemName.includes(foodName);
+      parsed[slot] = parsed[slot]
+        .filter(item => {
+          const idx = parseInt(item.index);
+          return !isNaN(idx) && idx >= 0 && idx < topFoods.length;
+        })
+        .map(item => {
+          const food = topFoods[parseInt(item.index)];
+          const portions = Math.max(1, Math.min(5, Math.round(parseFloat(item.portions) || 1)));
+          return {
+            name: food.name,
+            portions,
+            protein_g: food.protein_g,
+            carbs_g: food.carbs_g,
+            fat_g: food.fat_g,
+            calories: food.calories,
+            id: food.id
+          };
         });
-        if (match) {
-          item.name = match.name;
-          item.portions = Math.max(1, Math.min(5, Math.round(parseFloat(item.portions) || 1)));
-          item.protein_g = match.protein_g;
-          item.carbs_g = match.carbs_g;
-          item.fat_g = match.fat_g;
-          item.calories = match.calories;
-          return true;
-        }
-        return false;
-      });
     }
 
     return res.status(200).json({ ...parsed, _model: model });
