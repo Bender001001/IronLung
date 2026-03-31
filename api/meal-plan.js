@@ -33,8 +33,10 @@ export default async function handler(req, res) {
 
   const model = await findModel();
 
-  const topFoods = foods
-  .filter(f => f.calories > 0 && f.protein_g > 0 && !['Fast Food'].includes(f.category))
+  const ALLOWED_CATEGORIES = ['Protein', 'Carb', 'Fat', 'RTD Protein', 'Snack', 'Dairy', 'Supplements'];
+
+const topFoods = foods
+  .filter(f => f.calories > 0 && f.protein_g > 0 && ALLOWED_CATEGORIES.includes(f.category))
   .sort((a, b) => b.protein_g - a.protein_g)
   .slice(0, 50);
 
