@@ -35,10 +35,10 @@ export default async function handler(req, res) {
 
   const ALLOWED_CATEGORIES = ['Protein', 'Carb', 'Fat', 'RTD Protein', 'Snack', 'Dairy', 'Supplements'];
 
-const topFoods = foods
-  .filter(f => f.calories > 0 && f.protein_g > 0 && ALLOWED_CATEGORIES.includes(f.category))
-  .sort((a, b) => b.protein_g - a.protein_g)
-  .slice(0, 50);
+  const topFoods = foods
+    .filter(f => f.calories > 0 && f.protein_g > 0 && ALLOWED_CATEGORIES.includes(f.category))
+    .sort((a, b) => b.protein_g - a.protein_g)
+    .slice(0, 50);
 
   const foodList = topFoods.map(f =>
     `${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
@@ -77,7 +77,9 @@ AVAILABLE FOODS (name|protein|carbs|fat|calories):
 ${foodList}
 
 Create a full day meal plan across breakfast, lunch, dinner, snacks using ONLY the foods above.
-Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target within 10g.`;
+You MUST use the food names exactly as written in the list above — do not invent or abbreviate names.
+Use integer portions (1, 2, or 3). Hit protein target within 10g.
+Pick a variety of foods across the day — do not repeat the same food more than twice.`;
 
   try {
     const response = await fetch(
@@ -122,9 +124,13 @@ Match food names exactly. Use integer portions (1, 2, or 3). Hit protein target 
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
       parsed[slot] = parsed[slot].filter(item => {
-        const match = topFoods.find(f =>
-          sanitize(f.name).toLowerCase() === sanitize(item.name || "").toLowerCase()
-        );
+        const itemName = sanitize(item.name || "").toLowerCase();
+        const match = topFoods.find(f => {
+          const foodName = sanitize(f.name).toLowerCase();
+          return foodName === itemName ||
+            foodName.includes(itemName) ||
+            itemName.includes(foodName);
+        });
         if (match) {
           item.name = match.name;
           item.portions = Math.max(1, Math.min(5, Math.round(parseFloat(item.portions) || 1)));
