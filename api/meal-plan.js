@@ -38,7 +38,7 @@ export default async function handler(req, res) {
   const topFoods = foods
     .filter(f => f.calories > 0 && f.protein_g > 0 && ALLOWED_CATEGORIES.includes(f.category))
     .sort((a, b) => b.protein_g - a.protein_g)
-    .slice(0, 50);
+    .slice(0, 25);
 
   const foodList = topFoods.map(f =>
     `${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
