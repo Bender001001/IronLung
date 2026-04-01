@@ -93,21 +93,22 @@ export default async function handler(req, res) {
   const prompt = `You are a precision meal planning AI for a bodybuilder on a cut. Your job is to hit ALL three macro targets accurately.
 
 MACRO TARGETS — priority order:
-1. Calories: ${targets.calories}kcal (HARD LIMIT — stay within +100/-200. Never exceed by more than 100.)
+1. Calories: ${targets.calories}kcal (HARD LIMIT — must land between ${targets.calories - 150} and ${targets.calories + 150}. Too low is just as bad as too high.)
 2. Protein: ${targets.protein}g (within ±15g)
 3. Fat: ${targets.fat}g (within ±15g)
-4. Carbs: ${targets.carbs}g (hit as close as possible AFTER calories are in range)
+4. Carbs: ${targets.carbs}g (hit as close as possible while keeping calories in range)
 
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
 
 RULES:
-1. Calories are the hard limit. If hitting carb target would push calories over ${targets.calories + 100}, use fewer carbs.
-2. Use portions=1 for almost everything. portions=2 only if food is under 150cal and you have a big macro gap left.
-3. Never use portions=3 or higher.
-4. Do NOT use the same food in more than one meal slot. Every item across breakfast, lunch, dinner, snacks must be a different food.
-5. Do NOT stack protein shakes — max 1 RTD protein per day total.
-6. Include at least one carb source (rice, oats, potato, fruit, bread) per meal to distribute carbs evenly.
-7. After selecting, verify: total calories are within ${targets.calories}±100, protein within ±15g, no food repeated.
+1. Total calories MUST land between ${targets.calories - 150} and ${targets.calories + 150}. If you are under by more than 150, add more food. If over by more than 150, remove food.
+2. Each meal (breakfast, lunch, dinner, snacks) must have at least 2 foods. Aim for 2-3 items per meal.
+3. Use portions=1 by default. Use portions=2 if a food is under 300cal and you need to fill remaining calories without going over.
+4. Never use portions=3 or higher.
+5. Do NOT use the same food in more than one meal. Every item must be a unique food.
+6. Do NOT stack protein shakes — max 1 RTD protein per day.
+7. Include a carb source (rice, oats, potato, fruit, bread) in at least 3 of the 4 meals.
+8. After selecting, verify total calories are between ${targets.calories - 150}–${targets.calories + 150} and protein is within ±15g of ${targets.protein}g. Add or remove items to fix any gaps.
 
 AVAILABLE FOODS (index|name|protein|carbs|fat|calories):
 ${foodList}
