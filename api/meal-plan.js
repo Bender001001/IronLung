@@ -92,21 +92,22 @@ export default async function handler(req, res) {
 
   const prompt = `You are a precision meal planning AI for a bodybuilder on a cut. Your job is to hit ALL three macro targets accurately.
 
-MACRO TARGETS (must hit all three):
-- Protein: ${targets.protein}g (stay within 15g over or under)
-- Carbs: ${targets.carbs}g (stay within 30g over or under)
-- Fat: ${targets.fat}g (stay within 15g over or under)
-- Calories: ${targets.calories}kcal
+MACRO TARGETS — priority order:
+1. Calories: ${targets.calories}kcal (HARD LIMIT — stay within +100/-200. Never exceed by more than 100.)
+2. Protein: ${targets.protein}g (within ±15g)
+3. Fat: ${targets.fat}g (within ±15g)
+4. Carbs: ${targets.carbs}g (hit as close as possible AFTER calories are in range)
 
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
 
 RULES:
-1. Use portions=1 for most foods. Only use portions=2 if the food is very low calorie (<150cal) and you need to fill a macro gap.
-2. Never use portions=3 or higher.
-3. Do NOT stack multiple protein shakes or RTD proteins — max 1 per day total.
-4. Carbs are just as important as protein. Use rice, oats, potatoes, fruit, and other carb sources to hit the carb target.
-5. Spread meals across breakfast, lunch, dinner, snacks. Each meal should have 2-4 items.
-6. After selecting foods, mentally verify: total protein is near ${targets.protein}g, total carbs is near ${targets.carbs}g.
+1. Calories are the hard limit. If hitting carb target would push calories over ${targets.calories + 100}, use fewer carbs.
+2. Use portions=1 for almost everything. portions=2 only if food is under 150cal and you have a big macro gap left.
+3. Never use portions=3 or higher.
+4. Do NOT use the same food in more than one meal slot. Every item across breakfast, lunch, dinner, snacks must be a different food.
+5. Do NOT stack protein shakes — max 1 RTD protein per day total.
+6. Include at least one carb source (rice, oats, potato, fruit, bread) per meal to distribute carbs evenly.
+7. After selecting, verify: total calories are within ${targets.calories}±100, protein within ±15g, no food repeated.
 
 AVAILABLE FOODS (index|name|protein|carbs|fat|calories):
 ${foodList}
