@@ -2,7 +2,6 @@ let cachedModel = null;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
   const { foods, targets, preferences } = req.body;
   if (!foods || !targets) return res.status(400).json({ error: "Missing foods or targets" });
 
@@ -32,15 +31,38 @@ export default async function handler(req, res) {
   }
 
   const model = await findModel();
-
   const ALLOWED_CATEGORIES = ['Protein', 'Carb', 'Fat', 'RTD Protein', 'Snack', 'Dairy', 'Supplements'];
 
-  const topFoods = foods
-    .filter(f => f.calories > 0 && ALLOWED_CATEGORIES.includes(f.category))
-    .sort((a, b) => b.protein_g - a.protein_g)
-    .slice(0, 25);
+  const eligible = foods.filter(f => f.calories > 0 && ALLOWED_CATEGORIES.includes(f.category));
 
-  // Numbered index so Gemini returns a number, not a name
+  // Macro-weighted score: weight each macronutrient by its share of the target
+  const totalMacroTarget = (targets.protein || 1) + (targets.carbs || 1) + (targets.fat || 1);
+  const pW = (targets.protein || 1) / totalMacroTarget;
+  const cW = (targets.carbs || 1) / totalMacroTarget;
+  const fW = (targets.fat || 1) / totalMacroTarget;
+
+  const scored = eligible.map(f => ({
+    ...f,
+    _score: (f.protein_g * pW) + (f.carbs_g * cW) + (f.fat_g * fW)
+  })).sort((a, b) => b._score - a._score);
+
+  // Pool: top 15 by balanced score, then top 10 pure carb sources, then top 5 pure protein sources
+  const pool15 = scored.slice(0, 15);
+  const usedIds = new Set(pool15.map(f => f.id));
+
+  const carbPool = eligible
+    .filter(f => !usedIds.has(f.id))
+    .sort((a, b) => b.carbs_g - a.carbs_g)
+    .slice(0, 10);
+  carbPool.forEach(f => usedIds.add(f.id));
+
+  const protPool = eligible
+    .filter(f => !usedIds.has(f.id))
+    .sort((a, b) => b.protein_g - a.protein_g)
+    .slice(0, 5);
+
+  const topFoods = [...pool15, ...carbPool, ...protPool];
+
   const foodList = topFoods.map((f, i) =>
     `${i}|${sanitize(f.name)}|P${f.protein_g}|C${f.carbs_g}|F${f.fat_g}|${f.calories}cal`
   ).join("\n");
@@ -64,22 +86,32 @@ export default async function handler(req, res) {
       lunch: mealItemSchema,
       dinner: mealItemSchema,
       snacks: mealItemSchema,
-      },
+    },
     required: ["breakfast", "lunch", "dinner", "snacks"]
   };
 
-  const prompt = `You are a meal planning AI for a bodybuilder on a cut.
+  const prompt = `You are a precision meal planning AI for a bodybuilder on a cut. Your job is to hit ALL three macro targets accurately.
 
-MACRO TARGETS: Protein ${targets.protein}g, Carbs ${targets.carbs}g, Fat ${targets.fat}g, Calories ${targets.calories}
+MACRO TARGETS (must hit all three):
+- Protein: ${targets.protein}g (stay within 15g over or under)
+- Carbs: ${targets.carbs}g (stay within 30g over or under)
+- Fat: ${targets.fat}g (stay within 15g over or under)
+- Calories: ${targets.calories}kcal
+
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
+
+RULES:
+1. Use portions=1 for most foods. Only use portions=2 if the food is very low calorie (<150cal) and you need to fill a macro gap.
+2. Never use portions=3 or higher.
+3. Do NOT stack multiple protein shakes or RTD proteins — max 1 per day total.
+4. Carbs are just as important as protein. Use rice, oats, potatoes, fruit, and other carb sources to hit the carb target.
+5. Spread meals across breakfast, lunch, dinner, snacks. Each meal should have 2-4 items.
+6. After selecting foods, mentally verify: total protein is near ${targets.protein}g, total carbs is near ${targets.carbs}g.
 
 AVAILABLE FOODS (index|name|protein|carbs|fat|calories):
 ${foodList}
 
-Create a full day meal plan across breakfast, lunch, dinner, snacks.
-Use the index number (not the name) to reference each food.
-Use integer portions 1, 2, or 3 only.
-Hit protein target within 10g. Vary foods across meals.`;
+Return only valid JSON matching the schema. Reference foods by index number only.`;
 
   try {
     const response = await fetch(
@@ -90,7 +122,7 @@ Hit protein target within 10g. Vary foods across meals.`;
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.5,
+            temperature: 0.4,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
             responseSchema
@@ -107,7 +139,6 @@ Hit protein target within 10g. Vary foods across meals.`;
 
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
     if (!raw || raw.trim().length === 0) {
       return res.status(500).json({ error: "Empty response from Gemini" });
     }
@@ -120,7 +151,6 @@ Hit protein target within 10g. Vary foods across meals.`;
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
 
-    // Resolve index numbers back to actual food data
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
@@ -131,7 +161,7 @@ Hit protein target within 10g. Vary foods across meals.`;
         })
         .map(item => {
           const food = topFoods[parseInt(item.index)];
-          const portions = Math.max(1, Math.min(5, Math.round(parseFloat(item.portions) || 1)));
+          const portions = Math.max(1, Math.min(2, Math.round(parseFloat(item.portions) || 1)));
           return {
             name: food.name,
             portions,
@@ -145,7 +175,6 @@ Hit protein target within 10g. Vary foods across meals.`;
     }
 
     return res.status(200).json({ ...parsed, _model: model });
-
   } catch (err) {
     return res.status(500).json({ error: "Server error", detail: err.message });
   }
