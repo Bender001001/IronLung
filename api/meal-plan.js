@@ -35,7 +35,6 @@ export default async function handler(req, res) {
 
   const eligible = foods.filter(f => f.calories > 0 && ALLOWED_CATEGORIES.includes(f.category));
 
-  // Macro-weighted score: weight each macronutrient by its share of the target
   const totalMacroTarget = (targets.protein || 1) + (targets.carbs || 1) + (targets.fat || 1);
   const pW = (targets.protein || 1) / totalMacroTarget;
   const cW = (targets.carbs || 1) / totalMacroTarget;
@@ -46,7 +45,6 @@ export default async function handler(req, res) {
     _score: (f.protein_g * pW) + (f.carbs_g * cW) + (f.fat_g * fW)
   })).sort((a, b) => b._score - a._score);
 
-  // Pool: top 15 by balanced score, then top 10 pure carb sources, then top 5 pure protein sources
   const pool15 = scored.slice(0, 15);
   const usedIds = new Set(pool15.map(f => f.id));
 
@@ -90,30 +88,27 @@ export default async function handler(req, res) {
     required: ["breakfast", "lunch", "dinner", "snacks"]
   };
 
-  const prompt = `You are a precision meal planning AI for a bodybuilder on a cut. Your job is to hit ALL three macro targets accurately.
+  const prompt = `You are a precision meal planning AI for a bodybuilder on a cut.
 
-MACRO TARGETS — priority order:
-1. Calories: ${targets.calories}kcal (HARD LIMIT — must land between ${targets.calories - 150} and ${targets.calories + 150}. Too low is just as bad as too high.)
-2. Protein: ${targets.protein}g (within ±15g)
-3. Fat: ${targets.fat}g (within ±15g)
-4. Carbs: ${targets.carbs}g (hit as close as possible while keeping calories in range)
+MACRO TARGETS:
+- Calories: ${targets.calories}kcal (target — code will auto-adjust after)
+- Protein: ${targets.protein}g (within ±15g)
+- Fat: ${targets.fat}g (within ±15g)
+- Carbs: ${targets.carbs}g (hit as close as possible)
 
 ${preferences ? `PREFERENCES: ${preferences}` : ""}
 
 RULES:
-1. Total calories MUST land between ${targets.calories - 150} and ${targets.calories + 150}. If you are under by more than 150, add more food. If over by more than 150, remove food.
-2. Each meal (breakfast, lunch, dinner, snacks) must have at least 2 foods. Aim for 2-3 items per meal.
-3. Use portions=1 by default. Use portions=2 if a food is under 300cal and you need to fill remaining calories without going over.
-4. Never use portions=3 or higher.
-5. Do NOT use the same food in more than one meal. Every item must be a unique food.
-6. Do NOT stack protein shakes — max 1 RTD protein per day.
-7. Include a carb source (rice, oats, potato, fruit, bread) in at least 3 of the 4 meals.
-8. After selecting, verify total calories are between ${targets.calories - 150}–${targets.calories + 150} and protein is within ±15g of ${targets.protein}g. Add or remove items to fix any gaps.
+1. Each meal must have 2-3 items. Use portions=1 for everything.
+2. Do NOT repeat foods across meals.
+3. Max 1 RTD protein per day.
+4. Include a carb source in at least 3 of the 4 meals.
+5. Aim for variety — don't stack two high-calorie items in the same meal.
 
 AVAILABLE FOODS (index|name|protein|carbs|fat|calories):
 ${foodList}
 
-Return only valid JSON matching the schema. Reference foods by index number only.`;
+Return only valid JSON. Reference foods by index number only.`;
 
   try {
     const response = await fetch(
@@ -153,6 +148,7 @@ Return only valid JSON matching the schema. Reference foods by index number only
       return res.status(500).json({ error: "Invalid JSON", detail: parseErr.message, raw: raw.slice(0, 500) });
     }
 
+    // Resolve Gemini indices to real food objects
     const slots = ["breakfast", "lunch", "dinner", "snacks"];
     for (const slot of slots) {
       if (!Array.isArray(parsed[slot])) parsed[slot] = [];
@@ -175,6 +171,69 @@ Return only valid JSON matching the schema. Reference foods by index number only
           };
         });
     }
+
+    // ── POST-PROCESSING: deterministic calorie correction ──────────────────
+    const CAL_TARGET = targets.calories;
+    const CAL_MAX = CAL_TARGET + 150;
+    const CAL_MIN = CAL_TARGET - 200;
+
+    const totalCals = () =>
+      slots.reduce((sum, slot) =>
+        sum + parsed[slot].reduce((s, item) => s + item.calories * item.portions, 0), 0);
+
+    // TRIM: if over budget, repeatedly drop the highest-cal non-protein item
+    // (keep items where protein is their dominant macro to preserve protein target)
+    let iterations = 0;
+    while (totalCals() > CAL_MAX && iterations < 10) {
+      iterations++;
+      let worstSlot = null, worstIdx = -1, worstCal = -1;
+      for (const slot of slots) {
+        // Only trim meals with more than 1 item
+        if (parsed[slot].length <= 1) continue;
+        for (let i = 0; i < parsed[slot].length; i++) {
+          const item = parsed[slot][i];
+          const itemCal = item.calories * item.portions;
+          const isProteinDominant = item.protein_g * 4 > item.calories * 0.4;
+          if (!isProteinDominant && itemCal > worstCal) {
+            worstCal = itemCal;
+            worstSlot = slot;
+            worstIdx = i;
+          }
+        }
+      }
+      if (worstSlot === null) break; // nothing safe to drop
+      // Try halving portions first (2→1), then drop entirely
+      const item = parsed[worstSlot][worstIdx];
+      if (item.portions > 1) {
+        item.portions = 1;
+      } else {
+        parsed[worstSlot].splice(worstIdx, 1);
+      }
+    }
+
+    // FILL: if under budget by >200, try bumping portions on a low-cal carb item
+    iterations = 0;
+    while (totalCals() < CAL_MIN && iterations < 5) {
+      iterations++;
+      let bestSlot = null, bestIdx = -1;
+      for (const slot of slots) {
+        for (let i = 0; i < parsed[slot].length; i++) {
+          const item = parsed[slot][i];
+          if (item.portions < 2 && item.calories <= 400) {
+            const calAfter = totalCals() + item.calories;
+            if (calAfter <= CAL_MAX) {
+              bestSlot = slot;
+              bestIdx = i;
+              break;
+            }
+          }
+        }
+        if (bestSlot) break;
+      }
+      if (!bestSlot) break;
+      parsed[bestSlot][bestIdx].portions = 2;
+    }
+    // ── END POST-PROCESSING ────────────────────────────────────────────────
 
     return res.status(200).json({ ...parsed, _model: model });
   } catch (err) {
