@@ -564,7 +564,7 @@ function MuscleDiagram({muscle,color,imageUrl}){
     return(
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
         <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>{muscle}</div>
-        <div style={{width:160}}>
+        <div style={{width:160,background:C.sf2,borderRadius:8}}>
           <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block",borderRadius:8}} onError={e=>{e.target.style.display="none";}}/>
         </div>
       </div>
@@ -862,10 +862,11 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
   }
 
-  async function sv(eid,sn){if(!sid||String(sid).startsWith("temp_"))return;const k=`${eid}-${sn}`,d=sdRef.current[k];if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,dbId:d.dbId};cache.set(ck,cached);
+  async function sv(eid,sn,overrides={}){if(!sid||String(sid).startsWith("temp_"))return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,dbId:d.dbId};cache.set(ck,cached);
     try{if(d.dbId)await supabase.from("workout_sets").update({weight_lb:d.weight,reps:d.reps}).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,weight_lb:d.weight,reps:d.reps}).select().single();if(ins){setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}}
     catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
     setSaved(new Date().toLocaleTimeString());}
+  function adj(eid,sn,field,delta){const k=`${eid}-${sn}`,curr=sdRef.current[k]?.[field]||0;const newVal=field==="reps"?Math.max(0,Math.round(curr+delta)):Math.max(0,Math.round((curr+delta)*100)/100);const updates={weight:sdRef.current[k]?.weight||0,reps:sdRef.current[k]?.reps||0,[field]:newVal};setSd(p=>({...p,[k]:{...p[k],...updates}}));sv(eid,sn,updates);}
 
   function fill(eid,n,w){const u={};for(let i=1;i<=n;i++){const k=`${eid}-${i}`;u[k]={...sdRef.current[k],weight:w,reps:sd[k]?.reps||0,dbId:sd[k]?.dbId};}setSd(p=>({...p,...u}));}
   function done(eid,n){let c=0;for(let i=1;i<=n;i++)if(sd[`${eid}-${i}`]?.reps>0)c++;return c;}
@@ -945,10 +946,25 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                     Start rest timer ({Math.floor(restDur/60)}:{String(restDur%60).padStart(2,"0")})
                   </button>}
-                  <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 40px",gap:5,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
-                    return(<div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 40px",gap:5,marginBottom:5,alignItems:"center"}}><div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div><input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={inp}/><input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/><div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div></div>);
-                  })}
+                  {  return(<div key={i} style={{marginBottom:6}}>
+                  {    <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center"}}>
+                  {      <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div>
+                  {      <div style={{display:"flex",alignItems:"center",gap:3}}>
+                  {        <button onClick={()=>adj(ex.id,sn,"weight",-ex.increment)} style={{...tbtn,flexShrink:0}}>-</button>
+                  {        <input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
+                  {        <button onClick={()=>adj(ex.id,sn,"weight",ex.increment)} style={{...tbtn,flexShrink:0}}>+</button>
+                  {      </div>
+                  {      <div style={{display:"flex",alignItems:"center",gap:3}}>
+                  {        <button onClick={()=>adj(ex.id,sn,"reps",-1)} style={{...tbtn,flexShrink:0}}>-</button>
+                  {        <input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
+                  {        <button onClick={()=>adj(ex.id,sn,"reps",1)} style={{...tbtn,flexShrink:0}}>+</button>
+                  {      </div>
+                  {      <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
+                  {    </div>
+                  {  </div>);
+                  {})}
                   {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
                 </div>
               )}
