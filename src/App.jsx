@@ -948,23 +948,23 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   </button>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
-                  {  return(<div key={i} style={{marginBottom:6}}>
-                  {    <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center"}}>
-                  {      <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div>
-                  {      <div style={{display:"flex",alignItems:"center",gap:3}}>
-                  {        <button onClick={()=>adj(ex.id,sn,"weight",-ex.increment)} style={{...tbtn,flexShrink:0}}>-</button>
-                  {        <input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
-                  {        <button onClick={()=>adj(ex.id,sn,"weight",ex.increment)} style={{...tbtn,flexShrink:0}}>+</button>
-                  {      </div>
-                  {      <div style={{display:"flex",alignItems:"center",gap:3}}>
-                  {        <button onClick={()=>adj(ex.id,sn,"reps",-1)} style={{...tbtn,flexShrink:0}}>-</button>
-                  {        <input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
-                  {        <button onClick={()=>adj(ex.id,sn,"reps",1)} style={{...tbtn,flexShrink:0}}>+</button>
-                  {      </div>
-                  {      <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
-                  {    </div>
-                  {  </div>);
-                  {})}
+                    return(<div key={i} style={{marginBottom:6}}>
+                      <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center"}}>
+                        <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:3}}>
+                          <button onClick={()=>adj(ex.id,sn,"weight",-ex.increment)} style={{...tbtn,flexShrink:0}}>-</button>
+                          <input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
+                          <button onClick={()=>adj(ex.id,sn,"weight",ex.increment)} style={{...tbtn,flexShrink:0}}>+</button>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:3}}>
+                          <button onClick={()=>adj(ex.id,sn,"reps",-1)} style={{...tbtn,flexShrink:0}}>-</button>
+                          <input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
+                          <button onClick={()=>adj(ex.id,sn,"reps",1)} style={{...tbtn,flexShrink:0}}>+</button>
+                        </div>
+                        <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
+                      </div>
+                    </div>);
+                  })}
                   {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
                 </div>
               )}
