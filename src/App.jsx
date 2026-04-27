@@ -28,6 +28,8 @@ const card2={...card,border:`1px solid ${C.bd2}`};
 const PROGRAMS=[{id:1,name:"IRONCLAD"},{id:2,name:"APEX"}];
 const ROTATION=["Lower A","Upper A","Rest","Lower B","Upper B","Arms & Delts","Rest"];
 const WEEK_TYPES=["Learning","Accumulation","Deload","Peak"];
+function suggestedPhase(wk){const inBlock=((wk-1)%4)+1;return inBlock===1?"MEV":inBlock===2?"MAV":inBlock===3?"MRV":"DELOAD";}
+function blockNumber(wk){return Math.ceil(wk/4);}
 function isTodayTraining(){const d=new Date().getDay();const idx=d===0?6:d-1;return ROTATION[idx]!=="Rest";}
 function todayDayName(){const d=new Date().getDay();const idx=d===0?6:d-1;return ROTATION[idx];}
 const GOALS=[
@@ -47,7 +49,15 @@ function calcTDEE(weightLb,heightIn,age,actMult){
   const bmr=10*wKg+6.25*hCm-5*age+5;
   return Math.round(bmr*actMult);
 }
-const VOL_TARGETS={Quads:{min:10,max:20},Hamstrings:{min:10,max:16},Glutes:{min:6,max:16},Chest:{min:10,max:20},"Upper Chest":{min:4,max:10},Back:{min:10,max:20},Lats:{min:6,max:12},"Mid Back":{min:4,max:10},Shoulders:{min:8,max:16},"Side Delts":{min:6,max:12},"Rear Delts":{min:4,max:10},Biceps:{min:6,max:14},Triceps:{min:6,max:14},"Triceps Long Head":{min:3,max:8},Calves:{min:6,max:12},Adductors:{min:3,max:8},Abductors:{min:3,max:8}};
+let VOL_TARGETS={};
+async function loadVolTargets(){
+  try{
+    const cached=cache.get("vol_targets");if(cached)VOL_TARGETS=cached;
+    const{data}=await supabase.from("volume_targets").select("muscle,priority_level,target_min_sets,target_max_sets");
+    if(data){VOL_TARGETS={};data.forEach(t=>{VOL_TARGETS[t.muscle]={min:t.target_min_sets,max:t.target_max_sets,priority:t.priority_level};});cache.set("vol_targets",VOL_TARGETS);}
+  }catch{}
+}
+loadVolTargets();
 
 function navyBF(w,n,h){if(!w||!n||!h||w<=n)return null;return(86.010*Math.log10(w-n)-70.041*Math.log10(h)+36.76).toFixed(1);}
 
@@ -764,14 +774,17 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
               <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:s.c}}>{s.v}</div><div style={{...hlbl,marginTop:3}}>{s.l}</div></div>
             ))}
           </div>
-          {Object.keys(summary.muscles).length>0&&<div><div style={{...lbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const inR=tgt&&sets>=tgt.min&&sets<=tgt.max;const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:C.sf2,border:`1px solid ${inR?`${C.gn}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}><span style={{color:C.tx}}>{m}</span><span style={{color:inR?C.gn:C.mt}}>{sets}</span>{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
+          {Object.keys(summary.muscles).length>0&&<div><div style={{...lbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort(([ma,sa],[mb,sb])=>{const pa=VOL_TARGETS[ma]?.priority||"LOW",pb=VOL_TARGETS[mb]?.priority||"LOW";const po={HIGH:0,MED:1,LOW:2};return(po[pa]??2)-(po[pb]??2)||sb-sa;}).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const under=tgt&&sets<tgt.min,inR=tgt&&sets>=tgt.min&&sets<=tgt.max,over=tgt&&sets>tgt.max;const sc=inR?C.gn:under?C.am:over?C.rd:C.mt;const isHigh=tgt?.priority==="HIGH";const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:isHigh?`${C.ac}10`:C.sf2,border:`1px solid ${isHigh?`${C.ac}33`:tgt?`${sc}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>{isHigh&&<span style={{fontSize:7,color:C.ac,fontWeight:700}}>★</span>}<span style={{color:C.tx}}>{m}</span><span style={{color:sc}}>{sets}</span>{tgt&&<span style={{fontSize:8,color:C.mt}}>/{tgt.min}-{tgt.max}</span>}{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
         </div>
       )}
 
       {showCfg&&(
         <div style={{...card,marginBottom:12}}>
           <div style={{marginBottom:12}}>
-            <div style={{...lbl,marginBottom:10}}>Week phase</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <span style={lbl}>Week phase</span>
+              <span style={{fontSize:10,color:C.mt,fontFamily:mono}}>Block {blockNumber(week)} · suggested: {suggestedPhase(week)}</span>
+            </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {WEEK_TYPES.map(t=><button key={t} onClick={()=>setWeekType(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${weekType===t?(t==="Deload"?C.am:C.ac):C.bd}`,background:weekType===t?(t==="Deload"?C.am:C.ac)+"15":"transparent",color:weekType===t?(t==="Deload"?C.am:C.ac):C.mt,fontSize:12,fontWeight:weekType===t?600:400,cursor:"pointer"}}>{t}</button>)}
             </div>
@@ -816,12 +829,24 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[history,setHistory]=useState(null);
   const[notes,setNotes]=useState("");
   const[notesSaved,setNotesSaved]=useState(false);
+  const[readiness,setReadiness]=useState(null);
+  const[showReadiness,setShowReadiness]=useState(false);
+  const[checkedReadiness,setCheckedReadiness]=useState(false);
+  const[rdForm,setRdForm]=useState({sleep_hours:null,energy:null,soreness_priority:null});
   const saveTimer=useRef({});
   const sdRef=useRef({});
   sdRef.current=sd;
 
   function eff(ex){return isDeload?Math.min(ex.sets,2):ex.sets;}
   useEffect(()=>{init();loadLast();},[day.id,week]);
+  useEffect(()=>{
+    if(!sid||String(sid).startsWith("temp_")||checkedReadiness)return;
+    setCheckedReadiness(true);
+    (async()=>{
+      try{const{data}=await supabase.from("session_readiness").select("*").eq("session_id",sid).limit(1);
+      if(data?.[0]){setReadiness(data[0]);}else{setShowReadiness(true);}}catch{}
+    })();
+  },[sid,checkedReadiness]);
 
   async function loadLast(){
     const p=week-1;
@@ -849,7 +874,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     const ck=`session_${day.id}_${week}_${activeProgram}`;
     try{
       const{data}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);
-      if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
+      if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
       else{const{data:n}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
     }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets);}else{const tid=`temp_${Date.now()}`;setSid(tid);addPending({type:"create_session",data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
   }
@@ -889,6 +914,42 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
         <textarea value={notes} onChange={e=>setNotes(e.target.value)} onBlur={e=>saveNotes(e.target.value)} placeholder="Session notes — how you felt, anything off, PRs to remember..." style={{...inpL,height:notes?68:38,resize:"none",padding:"9px 12px",lineHeight:1.5,fontSize:12,color:C.tx,transition:"height 0.2s",fontFamily:sans}}/>
         {notesSaved&&<span style={{position:"absolute",right:10,bottom:8,fontSize:9,color:C.gn,fontFamily:mono}}>saved</span>}
       </div>
+      {showReadiness&&(
+        <div style={{background:`${C.ac}06`,border:`1px solid ${C.ac}33`,borderRadius:12,padding:14,marginBottom:12}}>
+          <div style={{...lbl,color:C.ac,marginBottom:12}}>How are you feeling?</div>
+          <div style={{marginBottom:10}}>
+            <div style={lbl2}>Sleep (hrs)</div>
+            <div style={{display:"flex",gap:5,marginTop:5}}>{[4,5,6,7,8,9].map(v=>{const sel=rdForm.sleep_hours===v;return<button key={v} onClick={()=>setRdForm(p=>({...p,sleep_hours:v}))} style={{flex:1,padding:"7px 0",borderRadius:7,border:`1px solid ${sel?`${C.ac}55`:C.bd}`,background:sel?`${C.ac}14`:C.sf2,color:sel?C.ac:C.mt,fontSize:11,fontFamily:mono,fontWeight:sel?600:400,cursor:"pointer"}}>{v}h</button>;})}
+            </div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <div style={lbl2}>Energy</div>
+            <div style={{display:"flex",gap:5,marginTop:5}}>{[1,2,3,4,5].map(v=>{const sel=rdForm.energy===v;return<button key={v} onClick={()=>setRdForm(p=>({...p,energy:v}))} style={{flex:1,padding:"7px 0",borderRadius:7,border:`1px solid ${sel?`${C.ac}55`:C.bd}`,background:sel?`${C.ac}14`:C.sf2,color:sel?C.ac:C.mt,fontSize:11,fontFamily:mono,fontWeight:sel?600:400,cursor:"pointer"}}>{v}/5</button>;})}
+            </div>
+          </div>
+          <div style={{marginBottom:14}}>
+            <div style={lbl2}>Priority muscle soreness</div>
+            <div style={{display:"flex",gap:5,marginTop:5}}>{[1,2,3,4,5].map(v=>{const sel=rdForm.soreness_priority===v;const label=v===1?"none":v===5?"high":`${v}/5`;return<button key={v} onClick={()=>setRdForm(p=>({...p,soreness_priority:v}))} style={{flex:1,padding:"7px 0",borderRadius:7,border:`1px solid ${sel?`${C.ac}55`:C.bd}`,background:sel?`${C.ac}14`:C.sf2,color:sel?C.ac:C.mt,fontSize:11,fontFamily:mono,fontWeight:sel?600:400,cursor:"pointer"}}>{label}</button>;})}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setShowReadiness(false)} style={{...btnGhost,flex:1,textAlign:"center"}}>Skip</button>
+            <button disabled={!rdForm.sleep_hours||!rdForm.energy} onClick={async()=>{
+              const r=rdForm;
+              const score=(r.sleep_hours||7)/8+(r.energy||3)/5+(6-(r.soreness_priority||3))/5;
+              const intensity_modifier=score<2?0.85:score<2.5?0.92:1.0;
+              const row={session_id:sid,sleep_hours:r.sleep_hours,energy:r.energy,soreness_priority:r.soreness_priority,intensity_modifier};
+              try{await supabase.from("session_readiness").insert(row);}catch{}
+              setReadiness(row);setShowReadiness(false);
+            }} style={{...btnP,flex:2,opacity:(!rdForm.sleep_hours||!rdForm.energy)?0.45:1}}>Save &amp; start</button>
+          </div>
+        </div>
+      )}
+      {readiness?.intensity_modifier&&readiness.intensity_modifier<1.0&&(
+        <div style={{padding:"8px 12px",marginBottom:12,background:`${C.am}10`,border:`1px solid ${C.am}22`,borderRadius:8,fontSize:11,color:C.am}}>
+          Recovery low. Loads suggested at {Math.round(readiness.intensity_modifier*100)}% today.
+        </div>
+      )}
       {isDeload&&<div style={{padding:"8px 12px",marginBottom:12,background:`${C.am}10`,border:`1px solid ${C.am}22`,borderRadius:8,fontSize:11,color:C.am}}>Deload week — 2 sets at ~60%</div>}
 
       {day.exercises.length===0&&(
@@ -901,7 +962,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {day.exercises.map((ex,xi)=>{
           const es=eff(ex),isE=expEx===xi,dn=done(ex.id,es),all=dn===es,pg=lw[ex.id];
-          const todayWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w):null;
+          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w):null;
+          const todayWeight=rawWeight&&readiness?.intensity_modifier?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
               <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);setShowTimer(false);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
@@ -966,6 +1028,22 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                         </div>
                         <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
                       </div>
+                      {ok&&<div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center",marginTop:4}}>
+                        <div/>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <span style={{fontSize:9,color:C.mt,minWidth:24,fontFamily:mono}}>RIR</span>
+                          <div style={{display:"flex",gap:4,flex:1}}>
+                            {[0,1,2,3].map(v=>{const sel=s.rir===v;const c=v===0?C.rd:v===1?C.am:C.gn;return<button key={v} onClick={()=>{const k=`${ex.id}-${sn}`;setSd(p=>({...p,[k]:{...p[k],rir:v}}));sv(ex.id,sn,{rir:v});}} style={{paddingTop:5,paddingBottom:5,paddingLeft:0,paddingRight:0,flex:1,background:sel?`${c}22`:C.sf2,border:`1px solid ${sel?c+"55":C.bd}`,borderRadius:5,fontSize:10,fontFamily:mono,fontWeight:600,color:sel?c:C.mt,cursor:"pointer"}}>{v}</button>;})}
+                          </div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <span style={{fontSize:9,color:C.mt,minWidth:28,fontFamily:mono}}>MMC</span>
+                          <div style={{display:"flex",gap:4,flex:1}}>
+                            {[1,2,3].map(v=>{const sel=s.mmc===v;const disp=v===1?"·":v===2?"··":"●";return<button key={v} onClick={()=>{const k=`${ex.id}-${sn}`;setSd(p=>({...p,[k]:{...p[k],mmc:v}}));sv(ex.id,sn,{mmc:v});}} style={{paddingTop:5,paddingBottom:5,paddingLeft:0,paddingRight:0,flex:1,background:sel?`${C.ac}14`:C.sf2,border:`1px solid ${sel?C.ac+"44":C.bd}`,borderRadius:5,fontSize:10,fontFamily:mono,fontWeight:600,color:sel?C.ac:C.mt,cursor:"pointer"}}>{disp}</button>;})}
+                          </div>
+                        </div>
+                        <div/>
+                      </div>}
                     </div>);
                   })}
                   {xi<day.exercises.length-1&&<button onClick={()=>{setExpEx(xi+1);setShowTimer(false);setHistory(null);}} style={{...btnP,marginTop:6,fontSize:13}}>Next exercise →</button>}
