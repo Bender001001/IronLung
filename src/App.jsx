@@ -74,6 +74,15 @@ async function loadVolTargets(){
 }
 loadVolTargets();
 
+function progressionFromRIR(prevSets){
+  const validRIRs=prevSets.filter(s=>s.rir!==null&&s.rir!==undefined).map(s=>s.rir);
+  if(validRIRs.length<2)return{delta:0,reason:null};
+  const avg=validRIRs.reduce((a,b)=>a+b,0)/validRIRs.length;
+  if(avg>=3)return{delta:1,reason:"Avg RIR "+avg.toFixed(1)+" — bump load"};
+  if(avg<=0.5)return{delta:-1,reason:"Avg RIR "+avg.toFixed(1)+" — hold"};
+  return{delta:0,reason:null};
+}
+
 function volumeStatus(sets,tgt){
   if(!tgt)return{label:"UNTAGGED",color:C.mt,severity:0};
   const mev=tgt.min,mrv=tgt.max,mav=tgt.mav||Math.round(mev+(mrv-mev)*0.65);
@@ -891,11 +900,11 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     const p=week-1;
     try{
       if(p>=1){
-        const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps)").eq("week_number",p).eq("training_day_id",day.id).limit(1);
+        const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps,rir)").eq("week_number",p).eq("training_day_id",day.id).limit(1);
         if(data?.[0]){
           const byE={};data[0].workout_sets.forEach(w=>{if(!byE[w.exercise_id])byE[w.exercise_id]=[];byE[w.exercise_id].push(w);});
           const prog={};
-          Object.entries(byE).forEach(([eid,sets])=>{const v=sets.filter(s=>s.reps>0&&s.weight_lb>0);if(!v.length)return;const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));const ex=day.exercises.find(e=>e.id===parseInt(eid));if(isDeload)prog[eid]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true};else{const hit=ex&&v.every(s=>s.reps>=ex.repMax);prog[eid]={w:mw,r:avg,up:hit,sw:hit&&ex?mw+ex.increment:mw};}});
+          Object.entries(byE).forEach(([eid,sets])=>{const v=sets.filter(s=>s.reps>0&&s.weight_lb>0);if(!v.length)return;const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));const ex=day.exercises.find(e=>e.id===parseInt(eid));const rirAdj=progressionFromRIR(v);if(isDeload)prog[eid]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj};else{const hit=ex&&v.every(s=>s.reps>=ex.repMax);prog[eid]={w:mw,r:avg,up:hit,sw:hit&&ex?mw+ex.increment:mw,rirAdj};}});
           setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);return;
         }
       }
@@ -1002,7 +1011,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
         {day.exercises.map((origEx,xi)=>{
           const ex=swapMap[origEx.id]||origEx;
           const es=eff(ex),isE=expEx===xi,dn=done(ex.id,es),all=dn===es,pg=lw[ex.id];
-          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w):null;
+          const rirAdj=pg?.rirAdj;
+          const rirBump=!pg?.deload&&rirAdj?.delta===1?(ex.increment||2.5):0;
+          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw+rirBump:pg.w+rirBump):null;
           const todayWeight=rawWeight&&readiness?.intensity_modifier?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
@@ -1013,7 +1024,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   <div style={{fontSize:11,color:C.mt,marginTop:1}}>{es}×{ex.repMin}–{ex.repMax}{todayWeight&&<span style={{color:pg.up?C.gn:pg.deload?C.am:C.mt}}> · {todayWeight}lb</span>}{dn>0&&<span style={{color:all?C.gn:C.am}}> · {dn}/{es}</span>}</div>
                 </div>
                 {ex.tempo&&<span style={{fontSize:9,fontFamily:mono,fontWeight:700,color:ex.tempo>=3?C.gn:C.mt,background:ex.tempo>=3?`${C.gn}14`:C.sf2,padding:"2px 6px",borderRadius:4,flexShrink:0}}>{ex.tempo}s ↓</span>}
-                {pg?.up&&!all&&!isDeload&&<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>↑ LOAD</span>}
+                {!all&&!isDeload&&(rirAdj?.delta===1?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>↑ RIR</span>:rirAdj?.delta===-1?<span style={{fontSize:9,fontWeight:700,color:C.am,background:`${C.am}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>RIR hold</span>:pg?.up?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>↑ LOAD</span>:null)}
                 {pg?.deload&&<span style={{fontSize:9,fontWeight:700,color:C.am,background:`${C.am}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>60%</span>}
                 <span style={{color:C.mt,transform:isE?"rotate(90deg)":"none",transition:"transform 0.2s",fontSize:18,flexShrink:0,lineHeight:1}}>›</span>
               </button>
