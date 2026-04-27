@@ -1320,7 +1320,33 @@ function LineChart({points,color,height=90}){
 
 function Stats({meas,week,online,activeProgram}){
   const[prs,setPrs]=useState([]);const[vol,setVol]=useState({});const[muscleTrend,setMuscleTrend]=useState({});const[view,setView]=useState("prs");const[selMuscle,setSelMuscle]=useState(null);
-  useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();},[week,activeProgram]);
+  const[reviewWeek,setReviewWeek]=useState(week);const[reviewData,setReviewData]=useState(null);
+  useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();getWeekReview(reviewWeek);},[week,activeProgram]);
+  useEffect(()=>{getWeekReview(reviewWeek);},[reviewWeek]);
+  async function getWeekReview(wk){
+    try{
+      const{data:sessions}=await supabase.from("workout_sessions").select("id").eq("week_number",wk).eq("program_id",activeProgram);
+      if(!sessions||!sessions.length){setReviewData({empty:true,week:wk});return;}
+      const sessionIds=sessions.map(s=>s.id);
+      const{data:sets}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,rir,exercises(name,primary_muscle)").in("session_id",sessionIds).gt("reps",0);
+      const sessionsCompleted=sessions.length;
+      const completionPct=Math.round((sessionsCompleted/5)*100);
+      const rirs=(sets||[]).filter(s=>s.rir!==null&&s.rir!==undefined).map(s=>s.rir);
+      const avgRIR=rirs.length?parseFloat((rirs.reduce((a,b)=>a+b,0)/rirs.length).toFixed(1)):null;
+      const volumeByMuscle={};
+      (sets||[]).forEach(s=>{const m=s.exercises?.primary_muscle;if(m)volumeByMuscle[m]=(volumeByMuscle[m]||0)+1;});
+      const{data:prevSessions}=await supabase.from("workout_sessions").select("id").eq("week_number",wk-1).eq("program_id",activeProgram);
+      const prevIds=(prevSessions||[]).map(s=>s.id);
+      let topGains=[];
+      if(prevIds.length){
+        const{data:prevSets}=await supabase.from("workout_sets").select("weight_lb,exercises(name)").in("session_id",prevIds).gt("weight_lb",0);
+        const prevMax={};(prevSets||[]).forEach(s=>{const n=s.exercises?.name;if(n&&s.weight_lb)prevMax[n]=Math.max(prevMax[n]||0,s.weight_lb);});
+        const currMax={};(sets||[]).forEach(s=>{const n=s.exercises?.name;if(n&&s.weight_lb)currMax[n]=Math.max(currMax[n]||0,s.weight_lb);});
+        topGains=Object.entries(currMax).map(([name,w])=>({name,delta:w-(prevMax[name]||w)})).filter(g=>g.delta>0).sort((a,b)=>b.delta-a.delta).slice(0,3);
+      }
+      setReviewData({week:wk,sessionsCompleted,completionPct,avgRIR,volumeByMuscle,topGains});
+    }catch{setReviewData(null);}
+  }
   async function loadPRs(){try{const{data}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,exercises(name)").order("weight_lb",{ascending:false});if(data){const best={};data.forEach(s=>{const n=s.exercises?.name;if(!n||!s.weight_lb||!s.reps)return;const e1=s.weight_lb*(1+s.reps/30);if(!best[n]||e1>best[n].est1rm)best[n]={exercise:n,weight:s.weight_lb,reps:s.reps,est1rm:e1};});const p=Object.values(best).sort((a,b)=>b.est1rm-a.est1rm);setPrs(p);cache.set("prs",p);}}catch{const c=cache.get("prs");if(c)setPrs(c);}}
   async function loadVol(){try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,reps,exercises(primary_muscle))").eq("week_number",week).eq("program_id",activeProgram);if(data){const m={};data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0&&ws.exercises?.primary_muscle){const mu=ws.exercises.primary_muscle;m[mu]=(m[mu]||0)+1;}}));setVol(m);}}catch{}}
   async function loadMuscleTrend(){try{const{data}=await supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0);if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
@@ -1342,6 +1368,38 @@ function Stats({meas,week,online,activeProgram}){
         {topPR&&<div style={{background:C.sf,borderRadius:10,border:`1px solid ${C.gn}22`,padding:"12px 14px"}}><div style={{...lbl,color:C.gn,marginBottom:5}}>Top E1RM</div><div style={{fontSize:20,fontWeight:700,fontFamily:mono,color:C.gn}}>{Math.round(topPR.est1rm)}<span style={{fontSize:10,color:C.mt,fontWeight:400}}> lb</span></div><div style={{fontSize:10,color:C.mt,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{topPR.exercise}</div></div>}
         {topRaw&&<div style={{background:C.sf,borderRadius:10,border:`1px solid ${C.ac}22`,padding:"12px 14px"}}><div style={{...lbl,color:C.ac,marginBottom:5}}>Heaviest set</div><div style={{fontSize:20,fontWeight:700,fontFamily:mono,color:C.ac}}>{topRaw.weight}<span style={{fontSize:10,color:C.mt,fontWeight:400}}> lb</span></div><div style={{fontSize:10,color:C.mt,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{topRaw.exercise}</div></div>}
       </div>)}
+      {reviewData&&!reviewData.empty&&(
+        <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"14px",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:700}}>W{reviewData.week} Review</div>
+            <button onClick={()=>{const nw=reviewWeek===week?week-1:week;setReviewWeek(nw);}} style={{fontSize:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${C.bd}`,background:"transparent",color:C.mt,cursor:"pointer"}}>{reviewWeek===week?"Last Week":"This Week"}</button>
+          </div>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+            <div style={{fontSize:36,fontWeight:700,fontFamily:mono,color:reviewData.completionPct>=80?C.gn:reviewData.completionPct>=50?C.am:C.rd,lineHeight:1}}>{Math.min(reviewData.completionPct,100)}%</div>
+            <div style={{fontSize:11,color:C.mt}}>complete</div>
+          </div>
+          <div style={{fontSize:11,color:C.mt,marginBottom:10}}>{reviewData.sessionsCompleted} session{reviewData.sessionsCompleted!==1?"s":""}{reviewData.avgRIR!==null?` · avg RIR ${reviewData.avgRIR}`:""}</div>
+          {Object.keys(reviewData.volumeByMuscle).length>0&&(
+            <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:10}}>
+              {Object.entries(reviewData.volumeByMuscle).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{
+                const st=volumeStatus(sets,VOL_TARGETS[m]);
+                return<span key={m} style={{fontSize:10,padding:"3px 8px",borderRadius:12,background:`${st.color}15`,color:st.color,border:`1px solid ${st.color}33`}}>{m} {sets}</span>;
+              })}
+            </div>
+          )}
+          {reviewData.topGains&&reviewData.topGains.length>0&&(
+            <div>
+              <div style={{fontSize:10,fontWeight:600,color:C.mt,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Top Gains</div>
+              {reviewData.topGains.map(g=>(
+                <div key={g.name} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0"}}>
+                  <span style={{color:C.tx,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"70%"}}>{g.name}</span>
+                  <span style={{color:C.gn,fontFamily:mono,fontWeight:600}}>+{g.delta} lb</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{display:"flex",gap:4,marginBottom:16,background:C.sf2,borderRadius:10,padding:4}}>
         {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"},{id:"bf",l:"Body Fat"},{id:"muscle",l:"Muscle"}].map(v=>(
           <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:11,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>{v.l}</button>
