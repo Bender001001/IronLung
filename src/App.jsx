@@ -67,11 +67,20 @@ let VOL_TARGETS={};
 async function loadVolTargets(){
   try{
     const cached=cache.get("vol_targets");if(cached)VOL_TARGETS=cached;
-    const{data}=await supabase.from("volume_targets").select("muscle,priority_level,target_min_sets,target_max_sets");
-    if(data){VOL_TARGETS={};data.forEach(t=>{VOL_TARGETS[t.muscle]={min:t.target_min_sets,max:t.target_max_sets,priority:t.priority_level};});cache.set("vol_targets",VOL_TARGETS);}
+    const{data}=await supabase.from("volume_targets").select("muscle,priority_level,target_min_sets,target_mav_sets,target_max_sets");
+    if(data){VOL_TARGETS={};data.forEach(t=>{VOL_TARGETS[t.muscle]={min:t.target_min_sets,mav:t.target_mav_sets||null,max:t.target_max_sets,priority:t.priority_level};});cache.set("vol_targets",VOL_TARGETS);}
   }catch{}
 }
 loadVolTargets();
+
+function volumeStatus(sets,tgt){
+  if(!tgt)return{label:"UNTAGGED",color:C.mt,severity:0};
+  const mev=tgt.min,mrv=tgt.max,mav=tgt.mav||Math.round(mev+(mrv-mev)*0.65);
+  if(sets<mev)return{label:"UNDER",color:C.rd,severity:1,delta:mev-sets,mev,mav,mrv};
+  if(sets<mav)return{label:"BUILD",color:C.am,severity:2,mev,mav,mrv};
+  if(sets<=mrv)return{label:"OPTIMAL",color:C.gn,severity:3,mev,mav,mrv};
+  return{label:"JUNK",color:C.rd,severity:4,delta:sets-mrv,mev,mav,mrv};
+}
 
 function navyBF(w,n,h){if(!w||!n||!h||w<=n)return null;return(86.010*Math.log10(w-n)-70.041*Math.log10(h)+36.76).toFixed(1);}
 
@@ -1310,32 +1319,57 @@ function Stats({meas,week,online,activeProgram}){
           <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:11,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>{v.l}</button>
         ))}
       </div>
-      {view==="vol"&&(
-        <div>
-          <div style={{...lbl,marginBottom:12}}>Sets vs target — W{week}</div>
-          {volD.map(v=>{
-            const inR=v.actual>=v.min&&v.actual<=v.max,over=v.actual>v.max;
-            const bc=v.actual===0?`${C.mt}44`:inR?C.gn:over?C.am:C.rd;
-            return(
-              <div key={v.muscle} style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{fontSize:12}}>{v.muscle}</span>
-                  <span style={{fontSize:11,fontFamily:mono,color:bc}}>{v.actual}<span style={{color:C.mt}}>/{v.min}–{v.max}</span></span>
+      {view==="vol"&&(()=>{
+        const lo={JUNK:0,UNDER:1,BUILD:2,OPTIMAL:3,UNTAGGED:4};
+        const po={HIGH:0,MED:1,LOW:2};
+        const vData=[...new Set([...Object.keys(VOL_TARGETS),...Object.keys(vol)])].filter(m=>vol[m]>0).map(m=>{
+          const tgt=VOL_TARGETS[m],actual=vol[m]||0,st=volumeStatus(actual,tgt);
+          return{muscle:m,actual,tgt,st,priority:tgt?.priority||"LOW"};
+        }).sort((a,b)=>(lo[a.st.label]??4)-(lo[b.st.label]??4)||(po[a.priority]??2)-(po[b.priority]??2));
+        const junkCount=vData.filter(v=>v.st.label==="JUNK").length;
+        const underCount=vData.filter(v=>v.st.label==="UNDER").length;
+        return(
+          <div>
+            {junkCount>0&&<div style={{padding:"7px 12px",marginBottom:10,background:`${C.rd}10`,border:`1px solid ${C.rd}33`,borderRadius:8,fontSize:11,color:C.rd}}>{junkCount} muscle{junkCount>1?"s":""} over MRV — consider trimming sets</div>}
+            {!junkCount&&underCount>0&&<div style={{padding:"7px 12px",marginBottom:10,background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:8,fontSize:11,color:C.am}}>{underCount} muscle{underCount>1?"s":""} below MEV — consider adding sets</div>}
+            <div style={{...lbl,marginBottom:10}}>Sets vs target — W{week}</div>
+            {vData.map(v=>{
+              const{muscle,actual,tgt,st}=v;
+              const isHigh=tgt?.priority==="HIGH";
+              const mev=st.mev??0,mav=st.mav??0,mrv=st.mrv??0;
+              const barMax=Math.max(mrv*1.2,actual*1.1,1);
+              return(
+                <div key={muscle} style={{marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5}}>
+                      {isHigh&&<span style={{fontSize:8,color:C.ac,fontWeight:700}}>★</span>}
+                      <span style={{fontSize:12,color:C.tx}}>{muscle}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:11,fontFamily:mono,color:C.mt}}>{actual}/{mrv||"?"}</span>
+                      <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",color:st.color}}>
+                        {st.label}{st.label==="JUNK"&&st.delta!=null?` +${st.delta}`:st.label==="UNDER"&&st.delta!=null?` -${st.delta}`:""}
+                      </span>
+                    </div>
+                  </div>
+                  {tgt&&<div style={{position:"relative",width:"100%",height:6,background:C.sf2,borderRadius:3}}>
+                    <div style={{position:"absolute",left:0,width:`${Math.min((mev/barMax)*100,100)}%`,height:"100%",background:`${C.rd}30`,borderRadius:"3px 0 0 3px"}}/>
+                    <div style={{position:"absolute",left:`${(mev/barMax)*100}%`,width:`${Math.min(((mav-mev)/barMax)*100,100)}%`,height:"100%",background:`${C.am}30`}}/>
+                    <div style={{position:"absolute",left:`${(mav/barMax)*100}%`,width:`${Math.min(((mrv-mav)/barMax)*100,100)}%`,height:"100%",background:`${C.gn}30`,borderRadius:"0 3px 3px 0"}}/>
+                    <div style={{position:"absolute",left:`${Math.min((actual/barMax)*100,99)}%`,transform:"translateX(-50%)",top:-1,width:3,height:8,background:st.color,borderRadius:2}}/>
+                  </div>}
                 </div>
-                <div style={{position:"relative",width:"100%",height:10,background:C.sf,borderRadius:3,overflow:"hidden"}}>
-                  <div style={{position:"absolute",left:`${(v.min/maxB)*100}%`,width:`${((v.max-v.min)/maxB)*100}%`,height:"100%",background:`${C.mt}18`,borderRadius:3}}/>
-                  <div style={{position:"relative",width:`${(v.actual/maxB)*100}%`,height:"100%",background:`${bc}77`,borderRadius:3}}/>
-                </div>
-              </div>
-            );
-          })}
-          <div style={{display:"flex",gap:12,marginTop:12,fontSize:10,color:C.mt}}>
-            <span><span style={{color:C.gn}}>●</span> In range</span>
-            <span><span style={{color:C.rd}}>●</span> Below</span>
-            <span><span style={{color:C.am}}>●</span> Above</span>
+              );
+            })}
+            <div style={{display:"flex",gap:12,marginTop:8,fontSize:10,color:C.mt}}>
+              <span><span style={{color:C.rd}}>●</span> Under MEV</span>
+              <span><span style={{color:C.am}}>●</span> Build</span>
+              <span><span style={{color:C.gn}}>●</span> Optimal</span>
+              <span><span style={{color:C.rd,fontWeight:700}}>●</span> Junk</span>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {view==="bw"&&(bwPoints.length>=2?(<div><div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}><div style={lbl}>Bodyweight trend</div><div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bwPoints[0].y} → <span style={{color:C.ac,fontWeight:600}}>{bwPoints[bwPoints.length-1].y} lb</span></div></div><div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"14px 10px 6px"}}><LineChart points={bwPoints} color={C.ac} height={100}/></div></div>):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet</div>)}
       {view==="bf"&&(bfData.length>=2?(<div><div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}><div style={lbl}>Body fat trend</div><div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bfData[0].y}% → <span style={{color:C.am,fontWeight:600}}>{bfData[bfData.length-1].y}%</span></div></div><div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.am}22`,padding:"14px 10px 6px"}}><LineChart points={bfData} color={C.am} height={100}/></div></div>):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet — log waist + neck measurements in Body tab</div>)}
       {view==="muscle"&&(muscleKeys.length>0?(<div><div style={{...lbl,marginBottom:10}}>Max weight by muscle — all weeks</div><div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>{muscleKeys.map(m=>(<button key={m} onClick={()=>setSelMuscle(m)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${activeMuscle===m?getMC(m)+"55":C.bd}`,background:activeMuscle===m?getMC(m)+"14":"transparent",color:activeMuscle===m?getMC(m):C.mt,fontSize:11,fontWeight:activeMuscle===m?600:400,cursor:"pointer"}}>{m}</button>))}</div>{activeMuscle&&muscleTrend[activeMuscle]&&(<div style={{background:C.sf,borderRadius:12,border:`1px solid ${getMC(activeMuscle)}22`,padding:"14px 10px 6px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8,paddingLeft:4,paddingRight:4}}><div style={{fontSize:13,fontWeight:600,color:getMC(activeMuscle)}}>{activeMuscle}</div><div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{muscleTrend[activeMuscle][0].y} → <span style={{color:getMC(activeMuscle),fontWeight:600}}>{muscleTrend[activeMuscle][muscleTrend[activeMuscle].length-1].y} lb</span></div></div><LineChart points={muscleTrend[activeMuscle]} color={getMC(activeMuscle)} height={100}/></div>)}</div>):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>No training data yet</div>)}
