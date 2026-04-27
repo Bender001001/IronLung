@@ -74,6 +74,7 @@ async function loadVolTargets(){
 }
 loadVolTargets();
 
+function epley1RM(weight,reps){if(!weight||!reps)return 0;return weight*(1+reps/30);}
 function deloadAdjust(weight,weekType){if(weekType!=="Deload"||!weight)return weight;return Math.round((weight*0.6)/2.5)*2.5;}
 function deloadSets(sets,weekType){if(weekType!=="Deload")return sets;return Math.max(1,Math.ceil(sets/2));}
 
@@ -884,6 +885,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[swapEx,setSwapEx]=useState(null);
   const[swapCandidates,setSwapCandidates]=useState([]);
   const[swapMap,setSwapMap]=useState({});
+  const[prState,setPrState]=useState(null);
+  const prDismissRef=useRef(null);
   const saveTimer=useRef({});
   const sdRef=useRef({});
   sdRef.current=sd;
@@ -941,9 +944,20 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   }
 
   async function sv(eid,sn,overrides={}){if(!sid||String(sid).startsWith("temp_"))return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);
-    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{if(d.dbId)await supabase.from("workout_sets").update(payload).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,...payload}).select().single();if(ins){setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}}
-
-    catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
+    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId)await supabase.from("workout_sets").update(payload).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,...payload}).select().single();if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
+      if(savedRowId&&d.weight>0&&d.reps>0&&weekType!=="Deload"){
+        const currE1=epley1RM(d.weight,d.reps);
+        const{data:prior}=await supabase.from("workout_sets").select("weight_lb,reps,exercises(name)").eq("exercise_id",eid).neq("id",savedRowId).gt("weight_lb",0).gt("reps",0);
+        const priorMaxE1=(prior||[]).reduce((mx,s)=>Math.max(mx,epley1RM(s.weight_lb,s.reps)),0);
+        if(currE1>priorMaxE1){
+          await supabase.from("workout_sets").update({is_pr:true}).eq("id",savedRowId);
+          const exName=prior?.[0]?.exercises?.name||"";
+          if(prDismissRef.current)clearTimeout(prDismissRef.current);
+          setPrState({setId:savedRowId,weight:d.weight,reps:d.reps,e1RM:currE1,exerciseName:exName});
+          prDismissRef.current=setTimeout(()=>setPrState(null),4000);
+        }
+      }
+    }catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
     setSaved(new Date().toLocaleTimeString());}
   function adj(eid,sn,field,delta){const k=`${eid}-${sn}`,curr=sdRef.current[k]?.[field]||0;const newVal=field==="reps"?Math.max(0,Math.round(curr+delta)):Math.max(0,Math.round((curr+delta)*100)/100);const updates={weight:sdRef.current[k]?.weight||0,reps:sdRef.current[k]?.reps||0,[field]:newVal};setSd(p=>({...p,[k]:{...p[k],...updates}}));sv(eid,sn,updates);}
 
@@ -1131,6 +1145,13 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           );
         })}
       </div>
+      {prState&&(
+        <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",maxWidth:320,width:"calc(100% - 32px)",background:`${C.gn}22`,border:`1px solid ${C.gn}55`,borderRadius:10,padding:"12px 16px",zIndex:100,animation:"prIn 0.2s ease",pointerEvents:"none"}}>
+          <style>{`@keyframes prIn{from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}`}</style>
+          <div style={{fontSize:12,fontWeight:700,color:C.gn,textAlign:"center"}}>🏆 New PR — {prState.weight}×{prState.reps}{prState.exerciseName?` · ${prState.exerciseName}`:""}</div>
+          <div style={{fontSize:10,color:`${C.gn}cc`,textAlign:"center",marginTop:3}}>e1RM {Math.round(prState.e1RM)} lb</div>
+        </div>
+      )}
     </div>
   );
 }
