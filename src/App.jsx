@@ -4,6 +4,7 @@ import { supabase } from "./supabase.js";
 const cache={get(k){try{const v=localStorage.getItem(`il_${k}`);return v?JSON.parse(v):null;}catch{return null;}},set(k,v){try{localStorage.setItem(`il_${k}`,JSON.stringify(v));}catch{}}};
 function getPending(){return cache.get("pending")||[];}
 function localDate(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function daysSinceLastMeasurement(meas){if(!meas?.length)return Infinity;const last=meas.reduce((a,b)=>a.measure_date>b.measure_date?a:b);return Math.floor((Date.now()-new Date(last.measure_date).getTime())/86400000);}
 function addPending(op){const q=getPending();q.push({...op,ts:Date.now()});cache.set("pending",q);}
 async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
 
@@ -509,6 +510,7 @@ export default function App(){
   const[weekType,setWeekType]=useState(()=>cache.get("weekType")||"Accumulation");
   const[pc,setPc]=useState(0);
   const[activeProgram,setActiveProgram]=useState(()=>cache.get("activeProgram")||1);
+  const[measNudgeDismissed,setMeasNudgeDismissed]=useState(()=>{const v=cache.get("dismissed_measurement_nudge");if(!v)return false;return(Date.now()-new Date(v).getTime())<7*86400000;});
   const online=useOnline();
 
   useEffect(()=>{load();},[activeProgram]);
@@ -548,6 +550,17 @@ export default function App(){
   return(
     <div style={{background:C.bg,minHeight:"100vh",color:C.tx,fontFamily:sans,maxWidth:480,margin:"0 auto",paddingBottom:80}}>
       {(!online||pc>0)&&<div style={{background:!online?`${C.am}14`:C.sf,borderBottom:`1px solid ${!online?`${C.am}30`:C.bd}`,padding:"7px 16px",display:"flex",alignItems:"center",gap:7}}><div style={{width:6,height:6,borderRadius:"50%",background:!online?C.am:C.gn,flexShrink:0}}/><span style={{fontSize:11,color:!online?C.am:C.gn}}>{!online?"Offline mode":pc>0?`Syncing ${pc} items...`:"Synced"}</span></div>}
+      {tab==="train"&&!selDay&&!measNudgeDismissed&&daysSinceLastMeasurement(meas)>=14&&(
+        <div style={{padding:"16px 16px 0"}} onClick={()=>setTab("body")}>
+          <div style={{background:`${C.am}14`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"12px 14px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,cursor:"pointer"}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:C.am}}>Biweekly check-in due — last log {daysSinceLastMeasurement(meas)} days ago</div>
+              <div style={{fontSize:10,color:C.mt,marginTop:2}}>Tap to log</div>
+            </div>
+            <button onClick={e=>{e.stopPropagation();const v=new Date().toISOString();cache.set("dismissed_measurement_nudge",v);setMeasNudgeDismissed(true);}} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:4,flexShrink:0,lineHeight:1}}>×</button>
+          </div>
+        </div>
+      )}
       {tab==="train"&&!selDay&&<DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram} meas={meas} onAddMeas={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))}/>}
       {tab==="train"&&selDay&&<Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} online={online} onPC={()=>setPc(getPending().length)} activeProgram={activeProgram}/>}
       {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)}/>}
