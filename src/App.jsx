@@ -74,6 +74,9 @@ async function loadVolTargets(){
 }
 loadVolTargets();
 
+function deloadAdjust(weight,weekType){if(weekType!=="Deload"||!weight)return weight;return Math.round((weight*0.6)/2.5)*2.5;}
+function deloadSets(sets,weekType){if(weekType!=="Deload")return sets;return Math.max(1,Math.ceil(sets/2));}
+
 function progressionFromRIR(prevSets){
   const validRIRs=prevSets.filter(s=>s.rir!==null&&s.rir!==undefined).map(s=>s.rir);
   if(validRIRs.length<2)return{delta:0,reason:null};
@@ -885,7 +888,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const sdRef=useRef({});
   sdRef.current=sd;
 
-  function eff(ex){return isDeload?Math.min(ex.sets,2):ex.sets;}
+  function eff(ex){return deloadSets(ex.sets,weekType);}
   useEffect(()=>{init();loadLast();},[day.id,week]);
   useEffect(()=>{
     if(!sid||String(sid).startsWith("temp_")||checkedReadiness)return;
@@ -998,7 +1001,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           Recovery low. Loads suggested at {Math.round(readiness.intensity_modifier*100)}% today.
         </div>
       )}
-      {isDeload&&<div style={{padding:"8px 12px",marginBottom:12,background:`${C.am}10`,border:`1px solid ${C.am}22`,borderRadius:8,fontSize:11,color:C.am}}>Deload week — 2 sets at ~60%</div>}
+      {isDeload&&<div style={{padding:10,marginBottom:14,background:`${C.am}14`,border:`1px solid ${C.am}33`,borderRadius:8,fontSize:11,fontWeight:600,color:C.am,letterSpacing:"0.06em"}}>DELOAD WEEK — loads at 60%, sets halved</div>}
 
       {day.exercises.length===0&&(
         <div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13,background:C.sf2,borderRadius:12,border:`1px solid ${C.bd}`}}>
@@ -1021,7 +1024,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                 <div style={{fontFamily:mono,fontSize:13,fontWeight:700,color:all?C.gn:C.mt,width:22,textAlign:"center",flexShrink:0}}>{all?"✓":xi+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ex.name}</div>
-                  <div style={{fontSize:11,color:C.mt,marginTop:1}}>{es}×{ex.repMin}–{ex.repMax}{todayWeight&&<span style={{color:pg.up?C.gn:pg.deload?C.am:C.mt}}> · {todayWeight}lb</span>}{dn>0&&<span style={{color:all?C.gn:C.am}}> · {dn}/{es}</span>}</div>
+                  <div style={{fontSize:11,color:C.mt,marginTop:1}}>{es}×{ex.repMin}–{ex.repMax}{isDeload&&<span style={{fontSize:9,color:C.am}}> (deload)</span>}{todayWeight&&<span style={{color:pg.up?C.gn:pg.deload?C.am:C.mt}}> · {todayWeight}lb</span>}{dn>0&&<span style={{color:all?C.gn:C.am}}> · {dn}/{es}</span>}</div>
                 </div>
                 {ex.tempo&&<span style={{fontSize:9,fontFamily:mono,fontWeight:700,color:ex.tempo>=3?C.gn:C.mt,background:ex.tempo>=3?`${C.gn}14`:C.sf2,padding:"2px 6px",borderRadius:4,flexShrink:0}}>{ex.tempo}s ↓</span>}
                 {!all&&!isDeload&&(rirAdj?.delta===1?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>↑ RIR</span>:rirAdj?.delta===-1?<span style={{fontSize:9,fontWeight:700,color:C.am,background:`${C.am}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>RIR hold</span>:pg?.up?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>↑ LOAD</span>:null)}
