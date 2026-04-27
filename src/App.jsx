@@ -9,6 +9,20 @@ async function flushPending(){if(flushing)return 0;flushing=true;const q=getPend
 
 let flushing=false;
 
+async function getSwapCandidates(exerciseId){
+  const{data:src}=await supabase.from("exercises").select("primary_muscle,region_tag,length_bias").eq("id",exerciseId).single();
+  if(!src)return[];
+  const{data:pool}=await supabase.from("exercises").select("id,name,primary_muscle,region_tag,length_bias,is_compound,priority_level").eq("primary_muscle",src.primary_muscle).neq("id",exerciseId);
+  if(!pool)return[];
+  return pool.map(c=>{
+    let score=0,tier="OK";
+    if(c.region_tag&&c.region_tag===src.region_tag){score=3;tier="EXACT";}
+    else if(c.length_bias&&c.length_bias===src.length_bias){score=2;tier="CLOSE";}
+    else{score=1;tier="OK";}
+    return{...c,_score:score,_tier:tier};
+  }).sort((a,b)=>b._score-a._score);
+}
+
 const C={bg:"#111113",sf:"#19191d",sf2:"#222228",sf3:"#27272e",bd:"#2c2c34",bd2:"#38383f",tx:"#cdcdd0",tx2:"#9898a4",mt:"#6b6b76",ac:"#7c8aff",gn:"#5cb87a",rd:"#d4544e",am:"#c9a84c",bl:"#5b9bd5"};
 const mono="'JetBrains Mono',monospace",sans="'DM Sans',sans-serif";
 
@@ -833,6 +847,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[showReadiness,setShowReadiness]=useState(false);
   const[checkedReadiness,setCheckedReadiness]=useState(false);
   const[rdForm,setRdForm]=useState({sleep_hours:null,energy:null,soreness_priority:null});
+  const[swapEx,setSwapEx]=useState(null);
+  const[swapCandidates,setSwapCandidates]=useState([]);
+  const[swapMap,setSwapMap]=useState({});
   const saveTimer=useRef({});
   const sdRef=useRef({});
   sdRef.current=sd;
@@ -960,7 +977,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
       )}
 
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {day.exercises.map((ex,xi)=>{
+        {day.exercises.map((origEx,xi)=>{
+          const ex=swapMap[origEx.id]||origEx;
           const es=eff(ex),isE=expEx===xi,dn=done(ex.id,es),all=dn===es,pg=lw[ex.id];
           const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w):null;
           const todayWeight=rawWeight&&readiness?.intensity_modifier?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
@@ -982,7 +1000,30 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <button onClick={()=>setShowCues(showCues===xi?null:xi)} style={{flex:1,padding:"8px 12px",background:showCues===xi?`${C.ac}12`:"transparent",border:`1px solid ${showCues===xi?`${C.ac}44`:C.bd}`,borderRadius:8,color:showCues===xi?C.ac:C.mt,fontSize:11,cursor:"pointer",textAlign:"left",whiteSpace:showCues===xi?"normal":"nowrap",overflow:showCues===xi?"visible":"hidden",textOverflow:showCues===xi?"clip":"ellipsis",lineHeight:showCues===xi?1.5:"normal",display:"flex",alignItems:"center",gap:5}}>{showCues===xi?ex.cues:<><span style={{fontSize:10}}>📋</span> View cues</>}</button>
                     {ex.video&&<a href={ex.video} target="_blank" rel="noopener noreferrer" style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.ac,fontSize:11,textDecoration:"none",flexShrink:0}}>Watch</a>}
                     <button onClick={()=>history?.exerciseId===ex.id?setHistory(null):loadHistory(ex.id)} style={{padding:"8px 12px",background:C.sf2,border:`1px solid ${history?.exerciseId===ex.id?`${C.ac}44`:C.bd}`,borderRadius:8,color:history?.exerciseId===ex.id?C.ac:C.mt,fontSize:11,cursor:"pointer",flexShrink:0}}>History</button>
+                    <button onClick={async()=>{if(swapEx===xi){setSwapEx(null);return;}const cands=await getSwapCandidates(origEx.id);setSwapCandidates(cands);setSwapEx(xi);}} style={{padding:"8px 12px",background:swapEx===xi?`${C.am}14`:C.sf2,border:`1px solid ${swapEx===xi?`${C.am}44`:C.bd}`,borderRadius:8,color:swapEx===xi?C.am:C.mt,fontSize:11,cursor:"pointer",flexShrink:0}}>Swap</button>
                   </div>
+                  {swapEx===xi&&(
+                    <div style={{background:C.sf2,borderRadius:10,border:`1px solid ${C.bd}`,padding:10,marginBottom:10}}>
+                      <div style={{fontSize:11,fontWeight:600,color:C.tx,marginBottom:8}}>Swap: <span style={{color:C.mt}}>{origEx.name}</span></div>
+                      {swapCandidates.length===0&&<div style={{fontSize:11,color:C.mt,textAlign:"center",padding:"10px 0"}}>No alternatives found</div>}
+                      {[{tier:"EXACT",label:"Best match"},{tier:"CLOSE",label:"Similar"},{tier:"OK",label:"Same muscle"}].map(({tier,label})=>{
+                        const group=swapCandidates.filter(c=>c._tier===tier);
+                        if(!group.length)return null;
+                        return(<div key={tier} style={{marginBottom:6}}>
+                          <div style={{fontSize:9,fontWeight:600,color:C.mt,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>{label}</div>
+                          {group.map(c=>{
+                            const biasColor=c.length_bias==="lengthened"?C.gn:c.length_bias==="shortened"?C.am:null;
+                            const biasLabel=c.length_bias==="lengthened"?"long":c.length_bias==="shortened"?"short":c.length_bias==="mid-range"?"mid":null;
+                            return(<button key={c.id} onClick={()=>{setSwapMap(p=>({...p,[origEx.id]:c}));setSwapEx(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:swapMap[origEx.id]?.id===c.id?`${C.ac}12`:C.sf,border:`1px solid ${swapMap[origEx.id]?.id===c.id?`${C.ac}44`:C.bd}`,borderRadius:8,marginBottom:4,cursor:"pointer",textAlign:"left"}}>
+                              {c.priority_level==="HIGH"&&<span style={{fontSize:8,color:C.ac,fontWeight:700,flexShrink:0}}>★</span>}
+                              <span style={{fontSize:12,color:C.tx,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</span>
+                              {biasLabel&&<span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:biasColor?`${biasColor}14`:C.sf2,color:biasColor||C.mt,fontFamily:mono,flexShrink:0}}>{biasLabel}</span>}
+                            </button>);
+                          })}
+                        </div>);
+                      })}
+                    </div>
+                  )}
                   <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
                     <MuscleDiagram muscle={ex.muscle} color={pg?.up?C.gn:pg?.deload?C.am:C.ac} imageUrl={ex.imageUrl}/>
                   </div>
