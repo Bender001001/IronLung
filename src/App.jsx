@@ -609,6 +609,7 @@ const MUSCLE_MAP={
   "Rear Delts":{slugs:["back-deltoids"],side:"back"},
   "Shoulders":{slugs:["front-deltoids"],side:"front"},
   "Biceps":{slugs:["biceps"],side:"front"},
+  "Biceps (Short Head)":{slugs:["biceps"],side:"front"},
   "Triceps":{slugs:["triceps"],side:"back"},
   "Triceps Long Head":{slugs:["triceps"],side:"back"},
   "Abs":{slugs:["abs"],side:"front"},
@@ -628,6 +629,14 @@ const MUSCLE_MAP={
 // muscle's real anatomical mesh brightens and pulses in scale to read as
 // "engaged." Reuses the same muscle-name taxonomy as MUSCLE_MAP above and
 // only highlights the primary muscle, matching existing image/SVG behavior.
+// Biceps and triceps are split into their individual heads here (the source
+// mesh already models "short head of biceps brachii", "long head of biceps
+// brachii", and the three triceps heads as separate geometry) — the app's
+// own primary_muscle taxonomy already has "Biceps (Short Head)" and "Triceps
+// Long Head" as distinct values on some exercises, but every other view
+// (Flat, and the old box-mannequin) collapses them to the same highlight as
+// the generic muscle. This lets the 3D tab actually show the specific head
+// instead of the whole muscle group, wherever that distinction is tracked.
 const MUSCLE_PATTERNS={
   chest:[/pectoralis major/i],
   lats:[/latissimus dorsi/i],
@@ -635,8 +644,11 @@ const MUSCLE_PATTERNS={
   sideDelts:[/acromial part of deltoid/i],
   rearDelts:[/scapular spinal part of deltoid/i],
   frontDelts:[/clavicular part of deltoid/i],
-  biceps:[/biceps brachii/i],
-  triceps:[/triceps brachii/i],
+  bicepsShortHead:[/short head of biceps brachii/i],
+  bicepsLongHead:[/long head of biceps brachii/i],
+  tricepsLongHead:[/long head of triceps brachii/i],
+  tricepsLateralHead:[/lateral head of triceps brachii/i],
+  tricepsMedialHead:[/medial head of triceps brachii/i],
   abs:[/rectus abdominis/i],
   quads:[/rectus femoris/i,/vastus (lateralis|medialis|intermedius)/i],
   hamstrings:[/biceps femoris/i,/semitendinosus/i,/semimembranosus/i],
@@ -650,7 +662,8 @@ const MUSCLE_TO_ANATOMY={
   "Lats":["lats"],"Mid Back":["lats"],"Back":["lats"],
   "Upper Traps":["traps"],
   "Side Delts":["sideDelts"],"Rear Delts":["rearDelts"],"Shoulders":["sideDelts","frontDelts","rearDelts"],
-  "Biceps":["biceps"],"Triceps":["triceps"],"Triceps Long Head":["triceps"],
+  "Biceps":["bicepsShortHead","bicepsLongHead"],"Biceps (Short Head)":["bicepsShortHead"],
+  "Triceps":["tricepsLongHead","tricepsLateralHead","tricepsMedialHead"],"Triceps Long Head":["tricepsLongHead"],
   "Abs":["abs"],"Quads":["quads"],"Hamstrings":["hamstrings"],
   "Glutes":["glutes"],"Calves":["calves"],"Adductors":["adductors"],"Abductors":["glutes"],
 };
