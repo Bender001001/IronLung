@@ -596,8 +596,10 @@ export default function App(){
 }
 
 // ── Muscle diagram ─────────────────────────────────────────────────────────────
-import Model from 'react-body-highlighter';
-
+// MUSCLE_MAP's `side` field is still used below to auto-orient the 3D model
+// (front vs back). Its `slugs` field is now unused — it only ever fed the
+// removed Flat/SVG body-highlighter view — but left in place since it's
+// harmless and documents the front/back call for each muscle either way.
 const MUSCLE_MAP={
   "Lats":{slugs:["upper-back"],side:"back"},
   "Mid Back":{slugs:["trapezius","upper-back"],side:"back"},
@@ -806,8 +808,11 @@ function Muscle3DView({muscle,color}){
   // back muscle like Lats would be lit on a model facing away from camera.
   const initialYaw=useMemo(()=>MUSCLE_MAP[muscle]?.side==="back"?Math.PI:0,[muscle]);
   return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-      <div style={{width:160,height:190,background:C.sf2,borderRadius:8,position:"relative",touchAction:"none",overflow:"hidden"}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,width:"100%"}}>
+      {/* Sized up from the old fixed 160x190 (matched to the Photo/Flat thumbnails)
+          now that 3D is the more detailed, primary view — responsive so it also
+          fills more of the card on a phone instead of sitting tiny in a corner. */}
+      <div style={{width:"100%",maxWidth:280,aspectRatio:"160/190",background:C.sf2,borderRadius:8,position:"relative",touchAction:"none",overflow:"hidden"}}>
         <Canvas camera={{fov:28}} dpr={[1,1.5]}>
           <ambientLight intensity={1.4}/>
           <directionalLight position={[2,4,3]} intensity={1.6}/>
@@ -824,49 +829,47 @@ function Muscle3DView({muscle,color}){
           <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono,pointerEvents:"none"}}>Loading model…</div>
         )}
         {status==="error"&&(
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono,textAlign:"center",padding:12,pointerEvents:"none"}}>Couldn't load 3D model — try Photo or Flat</div>
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono,textAlign:"center",padding:12,pointerEvents:"none"}}>Couldn't load 3D model — try Photo</div>
         )}
         {status==="ready"&&(
           <button onClick={()=>setPlaying(p=>!p)} style={{position:"absolute",bottom:5,right:5,background:C.bg+"cc",border:`1px solid ${C.bd}`,borderRadius:6,color:C.tx2,fontSize:9,padding:"3px 7px",cursor:"pointer"}}>{playing?"Pause":"Play"}</button>
         )}
       </div>
       {/* CC BY-SA 4.0 requires attribution — kept visible whenever this asset is shown, not buried in a settings page. */}
-      <div style={{fontSize:7,color:C.mt,textAlign:"center",lineHeight:1.3,maxWidth:160}}>
+      <div style={{fontSize:7,color:C.mt,textAlign:"center",lineHeight:1.3,maxWidth:280}}>
         Anatomy model: <a href="https://www.z-anatomy.com/" target="_blank" rel="noreferrer" style={{color:C.mt}}>Z-Anatomy</a> via hpfrei, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer" style={{color:C.mt}}>CC BY-SA 4.0</a>
       </div>
     </div>
   );
 }
 
-// FIX: imageUrl first (cleaned PNGs with dark bg), SVG model as fallback, 3D optional
-function MuscleDiagram({muscle,color,imageUrl,exerciseName}){
+// Photo (curated per-exercise image) and 3D (real anatomical mesh) are the
+// two real options now. The old "Flat" body-highlighter silhouette is gone —
+// it only ever added real value for exercises with neither a photo nor a
+// MUSCLE_MAP entry, and 3D covers that same fallback case just as well (see
+// Cross-Body Rope Extension), so keeping a third, lower-fidelity view around
+// just added a toggle nobody needed. Cardio exercises (no primary_muscle
+// mapping at all) fall through to 3D too — a plain rotatable figure with
+// nothing highlighted, which is a reasonable "nothing to show" state.
+function MuscleDiagram({muscle,color,imageUrl}){
   const col=color||C.ac;
-  const[mode,setMode]=useState(imageUrl?"image":"svg");
-  const info=MUSCLE_MAP[muscle];
-  const isFront=info?.side==="front";
-  const activeData=info?[{name:muscle,muscles:info.slugs,frequency:1}]:null;
+  const[mode,setMode]=useState(imageUrl?"image":"3d");
 
   const chip=on=>({fontSize:9,padding:"3px 8px",borderRadius:20,border:`1px solid ${on?col:C.bd}`,background:on?`${col}14`:"transparent",color:on?col:C.mt,cursor:"pointer",fontWeight:600});
 
   return(
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
       <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
-        {muscle}{mode==="svg"&&info?` · ${isFront?"Front":"Back"}`:""}
+        {muscle}
       </div>
       {mode==="image"&&imageUrl&&(
         <div style={{width:160,background:C.sf2,borderRadius:8}}>
           <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block",borderRadius:8}} onError={e=>{e.target.style.display="none";}}/>
         </div>
       )}
-      {mode==="svg"&&info&&(
-        <div style={{width:90}}>
-          <Model data={activeData} style={{width:"100%"}} highlightedColors={[col]} bodyColor="#45454f" type={isFront?"anterior":"posterior"}/>
-        </div>
-      )}
       {mode==="3d"&&<Muscle3DView muscle={muscle} color={col}/>}
       <div style={{display:"flex",gap:4}}>
         {imageUrl&&<button onClick={()=>setMode("image")} style={chip(mode==="image")}>Photo</button>}
-        {info&&<button onClick={()=>setMode("svg")} style={chip(mode==="svg")}>Flat</button>}
         <button onClick={()=>setMode("3d")} style={chip(mode==="3d")}>3D</button>
       </div>
     </div>
