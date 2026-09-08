@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as THREE from "three";
 import { supabase } from "./supabase.js";
 
 const cache={get(k){try{const v=localStorage.getItem(`il_${k}`);return v?JSON.parse(v):null;}catch{return null;}},set(k,v){try{localStorage.setItem(`il_${k}`,JSON.stringify(v));}catch{}}};
@@ -617,32 +620,241 @@ const MUSCLE_MAP={
   "Abductors":{slugs:["abductors"],side:"front"},
 };
 
-// FIX: imageUrl first (cleaned PNGs with dark bg), SVG model as fallback
-function MuscleDiagram({muscle,color,imageUrl}){
-  const col=color||C.ac;
+// ── 3D muscle viewer (real anatomical mesh, static pose, flex-pulse) ───────
+// Source asset: Z-Anatomy / BodyParts3D via hpfrei/body-anatomy-3d-viewer
+// (CC BY-SA 4.0 — see attribution line rendered in the 3D tab below and
+// public/ANATOMY_LICENSE.txt). The asset has no skeleton rig, so there is no
+// joint motion here (unlike the old box-mannequin) — instead the primary
+// muscle's real anatomical mesh brightens and pulses in scale to read as
+// "engaged." Reuses the same muscle-name taxonomy as MUSCLE_MAP above and
+// only highlights the primary muscle, matching existing image/SVG behavior.
+const MUSCLE_PATTERNS={
+  chest:[/pectoralis major/i],
+  lats:[/latissimus dorsi/i],
+  traps:[/trapezius/i],
+  sideDelts:[/acromial part of deltoid/i],
+  rearDelts:[/scapular spinal part of deltoid/i],
+  frontDelts:[/clavicular part of deltoid/i],
+  biceps:[/biceps brachii/i],
+  triceps:[/triceps brachii/i],
+  abs:[/rectus abdominis/i],
+  quads:[/rectus femoris/i,/vastus (lateralis|medialis|intermedius)/i],
+  hamstrings:[/biceps femoris/i,/semitendinosus/i,/semimembranosus/i],
+  glutes:[/gluteus (maximus|medius|minimus)/i],
+  calves:[/gastrocnemius/i,/soleus muscle/i],
+  adductors:[/adductor (magnus|longus|brevis)/i],
+};
 
-  if(imageUrl){
-    return(
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-        <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>{muscle}</div>
+const MUSCLE_TO_ANATOMY={
+  "Chest":["chest"],"Upper Chest":["chest"],
+  "Lats":["lats"],"Mid Back":["lats"],"Back":["lats"],
+  "Upper Traps":["traps"],
+  "Side Delts":["sideDelts"],"Rear Delts":["rearDelts"],"Shoulders":["sideDelts","frontDelts","rearDelts"],
+  "Biceps":["biceps"],"Triceps":["triceps"],"Triceps Long Head":["triceps"],
+  "Abs":["abs"],"Quads":["quads"],"Hamstrings":["hamstrings"],
+  "Glutes":["glutes"],"Calves":["calves"],"Adductors":["adductors"],"Abductors":["glutes"],
+};
+
+// THREE.GLTFLoader sanitizes node names before exposing them as Object3D.name:
+// spaces become underscores and the ".001"-style duplicate suffix loses its
+// dot (e.g. "Clavicular head of pectoralis major muscle.001" ->
+// "Clavicular_head_of_pectoralis_major_muscle001"). Normalize before matching.
+function stripSuffix(name){return(name||"").replace(/_/g," ").replace(/\d+$/,"").trim();}
+function categoryForName(name){
+  const n=stripSuffix(name);
+  for(const[cat,list]of Object.entries(MUSCLE_PATTERNS))if(list.some(re=>re.test(n)))return cat;
+  return null;
+}
+
+let gltfPromise=null;
+function loadAnatomy(){
+  if(!gltfPromise){
+    const loader=new GLTFLoader();
+    gltfPromise=new Promise((resolve,reject)=>loader.load("/anatomy.glb",resolve,undefined,reject));
+  }
+  return gltfPromise;
+}
+
+function AnatomyModel({muscle,color,playing,onLoaded,onError}){
+  const[scene,setScene]=useState(null);
+  const activeMeshes=useRef([]);
+  const t=useRef(0);
+  const categories=useMemo(()=>MUSCLE_TO_ANATOMY[muscle]||[],[muscle]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    loadAnatomy().then(gltf=>{
+      if(cancelled)return;
+      const cloned=gltf.scene.clone(true);
+      cloned.traverse(obj=>{
+        if(!obj.isMesh)return;
+        obj.userData.anatomyCategory=categoryForName(obj.name);
+        obj.material=new THREE.MeshStandardMaterial({color:C.sf3,roughness:0.55,metalness:0.05});
+      });
+      setScene(cloned);
+      if(onLoaded)onLoaded();
+    }).catch(err=>{console.error("anatomy load failed",err);if(onError)onError();});
+    return()=>{cancelled=true;};
+  },[]);
+
+  useEffect(()=>{
+    if(!scene)return;
+    const active=[];
+    scene.traverse(obj=>{
+      if(!obj.isMesh)return;
+      if(obj.userData.anatomyCategory&&categories.includes(obj.userData.anatomyCategory)){
+        active.push(obj);
+      }else{
+        obj.material.color.set(C.sf3);
+        obj.scale.setScalar(1);
+      }
+    });
+    activeMeshes.current=active;
+  },[scene,categories]);
+
+  useFrame((_,delta)=>{
+    if(playing)t.current+=delta;
+    const s01=(Math.sin(t.current*1.6)+1)/2;
+    for(const m of activeMeshes.current){
+      m.material.color.set(color);
+      m.scale.setScalar(1+s01*0.14);
+    }
+  });
+
+  if(!scene)return null;
+  return<primitive object={scene}/>;
+}
+
+// Auto-frames the camera on the loaded mesh once its bounding box is known —
+// the anatomical asset's proportions/pivot differ from the old box mannequin,
+// so a fixed camera position would clip or under-fill the frame.
+function FitCamera({targetRef}){
+  const{camera}=useThree();
+  const fitted=useRef(false);
+  useFrame(()=>{
+    if(fitted.current||!targetRef.current)return;
+    const box=new THREE.Box3().setFromObject(targetRef.current);
+    if(box.isEmpty())return;
+    const size=new THREE.Vector3();box.getSize(size);
+    const center=new THREE.Vector3();box.getCenter(center);
+    if(size.length()===0)return;
+    const maxDim=Math.max(size.x,size.y,size.z);
+    const fov=camera.fov*(Math.PI/180);
+    const dist=(maxDim/2)/Math.tan(fov/2)*1.6;
+    camera.position.set(center.x,center.y,center.z+dist);
+    camera.lookAt(center);
+    camera.updateProjectionMatrix();
+    fitted.current=true;
+  });
+  return null;
+}
+
+// Manual drag-to-rotate + slow idle spin. No orbit-controls package added —
+// only the two libraries that were approved (three, @react-three/fiber).
+function OrbitGroup({children,initialYaw=0}){
+  const{gl}=useThree();
+  const group=useRef();
+  const dragging=useRef(false);
+  const last=useRef([0,0]);
+  const yawSet=useRef(false);
+  useEffect(()=>{
+    if(!yawSet.current&&group.current){group.current.rotation.y=initialYaw;yawSet.current=true;}
+  },[initialYaw]);
+  useEffect(()=>{
+    const el=gl.domElement;
+    const down=e=>{dragging.current=true;last.current=[e.clientX,e.clientY];};
+    const up=()=>{dragging.current=false;};
+    const move=e=>{
+      if(!dragging.current||!group.current)return;
+      const dx=e.clientX-last.current[0],dy=e.clientY-last.current[1];
+      last.current=[e.clientX,e.clientY];
+      group.current.rotation.y+=dx*0.01;
+      group.current.rotation.x=Math.max(-0.5,Math.min(0.5,group.current.rotation.x+dy*0.01));
+    };
+    el.addEventListener("pointerdown",down);
+    window.addEventListener("pointermove",move);
+    window.addEventListener("pointerup",up);
+    return()=>{el.removeEventListener("pointerdown",down);window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
+  },[gl]);
+  useFrame((_,delta)=>{if(!dragging.current&&group.current)group.current.rotation.y+=delta*0.15;});
+  return<group ref={group}>{children}</group>;
+}
+
+function Muscle3DView({muscle,color}){
+  const[playing,setPlaying]=useState(true);
+  // "loading" | "ready" | "error" — the anatomical mesh is a ~2.3MB fetch (vs.
+  // Tier A's instant procedural shapes), so on a slow connection the canvas
+  // would otherwise sit blank with no feedback; and if the fetch ever 404s
+  // (bad deploy, missing public/anatomy.glb) it would fail completely silently.
+  const[status,setStatus]=useState("loading");
+  const modelRef=useRef();
+  // Face whichever side the primary muscle is actually on (reuses the same
+  // front/back classification the SVG fallback already uses) — otherwise a
+  // back muscle like Lats would be lit on a model facing away from camera.
+  const initialYaw=useMemo(()=>MUSCLE_MAP[muscle]?.side==="back"?Math.PI:0,[muscle]);
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+      <div style={{width:160,height:190,background:C.sf2,borderRadius:8,position:"relative",touchAction:"none",overflow:"hidden"}}>
+        <Canvas camera={{fov:28}} dpr={[1,1.5]}>
+          <ambientLight intensity={1.4}/>
+          <directionalLight position={[2,4,3]} intensity={1.6}/>
+          <directionalLight position={[-2,1,-3]} intensity={1.0}/>
+          <directionalLight position={[0,-3,2]} intensity={0.6}/>
+          <OrbitGroup initialYaw={initialYaw}>
+            <group ref={modelRef}>
+              <AnatomyModel muscle={muscle} color={color} playing={playing} onLoaded={()=>setStatus("ready")} onError={()=>setStatus("error")}/>
+            </group>
+          </OrbitGroup>
+          <FitCamera targetRef={modelRef}/>
+        </Canvas>
+        {status==="loading"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono,pointerEvents:"none"}}>Loading model…</div>
+        )}
+        {status==="error"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono,textAlign:"center",padding:12,pointerEvents:"none"}}>Couldn't load 3D model — try Photo or Flat</div>
+        )}
+        {status==="ready"&&(
+          <button onClick={()=>setPlaying(p=>!p)} style={{position:"absolute",bottom:5,right:5,background:C.bg+"cc",border:`1px solid ${C.bd}`,borderRadius:6,color:C.tx2,fontSize:9,padding:"3px 7px",cursor:"pointer"}}>{playing?"Pause":"Play"}</button>
+        )}
+      </div>
+      {/* CC BY-SA 4.0 requires attribution — kept visible whenever this asset is shown, not buried in a settings page. */}
+      <div style={{fontSize:7,color:C.mt,textAlign:"center",lineHeight:1.3,maxWidth:160}}>
+        Anatomy model: <a href="https://www.z-anatomy.com/" target="_blank" rel="noreferrer" style={{color:C.mt}}>Z-Anatomy</a> via hpfrei, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer" style={{color:C.mt}}>CC BY-SA 4.0</a>
+      </div>
+    </div>
+  );
+}
+
+// FIX: imageUrl first (cleaned PNGs with dark bg), SVG model as fallback, 3D optional
+function MuscleDiagram({muscle,color,imageUrl,exerciseName}){
+  const col=color||C.ac;
+  const[mode,setMode]=useState(imageUrl?"image":"svg");
+  const info=MUSCLE_MAP[muscle];
+  const isFront=info?.side==="front";
+  const activeData=info?[{name:muscle,muscles:info.slugs,frequency:1}]:null;
+
+  const chip=on=>({fontSize:9,padding:"3px 8px",borderRadius:20,border:`1px solid ${on?col:C.bd}`,background:on?`${col}14`:"transparent",color:on?col:C.mt,cursor:"pointer",fontWeight:600});
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+      <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
+        {muscle}{mode==="svg"&&info?` · ${isFront?"Front":"Back"}`:""}
+      </div>
+      {mode==="image"&&imageUrl&&(
         <div style={{width:160,background:C.sf2,borderRadius:8}}>
           <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block",borderRadius:8}} onError={e=>{e.target.style.display="none";}}/>
         </div>
-      </div>
-    );
-  }
-
-  const info=MUSCLE_MAP[muscle];
-  if(!info)return null;
-  const isFront=info.side==="front";
-  const activeData=[{name:muscle,muscles:info.slugs,frequency:1}];
-  return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-      <div style={{fontSize:8,color:col,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:700,fontFamily:sans}}>
-        {muscle} · {isFront?"Front":"Back"}
-      </div>
-      <div style={{width:90}}>
-        <Model data={activeData} style={{width:"100%"}} highlightedColors={[col]} bodyColor="#45454f" type={isFront?"anterior":"posterior"}/>
+      )}
+      {mode==="svg"&&info&&(
+        <div style={{width:90}}>
+          <Model data={activeData} style={{width:"100%"}} highlightedColors={[col]} bodyColor="#45454f" type={isFront?"anterior":"posterior"}/>
+        </div>
+      )}
+      {mode==="3d"&&<Muscle3DView muscle={muscle} color={col}/>}
+      <div style={{display:"flex",gap:4}}>
+        {imageUrl&&<button onClick={()=>setMode("image")} style={chip(mode==="image")}>Photo</button>}
+        {info&&<button onClick={()=>setMode("svg")} style={chip(mode==="svg")}>Flat</button>}
+        <button onClick={()=>setMode("3d")} style={chip(mode==="3d")}>3D</button>
       </div>
     </div>
   );
@@ -1076,7 +1288,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     </div>
                   )}
                   <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
-                    <MuscleDiagram muscle={ex.muscle} color={pg?.up?C.gn:pg?.deload?C.am:C.ac} imageUrl={ex.imageUrl}/>
+                    <MuscleDiagram muscle={ex.muscle} color={pg?.up?C.gn:pg?.deload?C.am:C.ac} imageUrl={ex.imageUrl} exerciseName={ex.name}/>
                   </div>
                   {history?.exerciseId===ex.id&&history.weeks.length>0&&(
                     <div style={{background:C.sf2,borderRadius:10,padding:10,marginBottom:10}}>
