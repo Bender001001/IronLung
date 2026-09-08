@@ -1,0 +1,22 @@
+anatomy.glb — attribution and license
+======================================
+
+This file is a derivative of the anatomical 3D model published by:
+  - Z-Anatomy (https://www.z-anatomy.com/)
+  - via hpfrei/body-anatomy-3d-viewer (https://github.com/hpfrei/body-anatomy-3d-viewer)
+  - underlying data: BodyParts3D / DBCLS
+
+Original work licensed under CC BY-SA 4.0:
+  https://creativecommons.org/licenses/by-sa/4.0/
+
+Changes made from the original body.glb:
+  - Pruned from 826 mesh nodes (8.25 MB) down to 158 nodes (2.29 MB): kept
+    skeletal context (bones) plus the specific muscle groups IronLog tracks,
+    removed everything else (organs, vessels, other soft tissue, bursae, etc.)
+  - Re-exported without Draco compression (uncompressed accessors) since this
+    app's loader does not include a Draco decoder
+  - No geometry, scale, or naming was otherwise altered
+
+As a derivative of a CC BY-SA 4.0 work, this file (anatomy.glb) is itself
+licensed under CC BY-SA 4.0. The in-app 3D muscle viewer displays this
+attribution notice wherever the model is shown.
