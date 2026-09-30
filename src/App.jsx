@@ -1,24 +1,32 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import * as THREE from "three";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { supabase } from "./supabase.js";
+// three.js + @react-three/fiber are loaded on demand (see Muscle3DView below) so they
+// stay out of the main bundle; the 3D view is one toggle inside an exercise card.
 
 const cache={get(k){try{const v=localStorage.getItem(`il_${k}`);return v?JSON.parse(v):null;}catch{return null;}},set(k,v){try{localStorage.setItem(`il_${k}`,JSON.stringify(v));}catch{}}};
 function getPending(){return cache.get("pending")||[];}
 function localDate(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function isOptionalDay(d){return/^optional/i.test(d?.focus||"");}
+function mondayKey(ds){const[y,m,d]=String(ds).slice(0,10).split("-").map(Number);const dt=new Date(y,m-1,d);const back=(dt.getDay()+6)%7;dt.setDate(dt.getDate()-back);return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;}
 function daysSinceLastMeasurement(meas){if(!meas?.length)return Infinity;const last=meas.reduce((a,b)=>a.measure_date>b.measure_date?a:b);return Math.floor((Date.now()-new Date(last.measure_date).getTime())/86400000);}
+function addPendingSet(op){const q=getPending().filter(o=>!(o.type==="upsert_set"&&o.sessionId===op.sessionId&&o.exerciseId===op.exerciseId&&o.setNumber===op.setNumber));q.push({...op,ts:Date.now()});cache.set("pending",q);}
 function addPending(op){const q=getPending();q.push({...op,ts:Date.now()});cache.set("pending",q);}
-async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
+// Offline queue. Each op throws on a Supabase error so a failed op stays queued.
+// create_session ops carry the temp id the UI used; later set ops that point at that
+// temp id are re-pointed at the real session id once it exists.
+async function flushPending(){if(flushing)return 0;flushing=true;try{const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];const idMap=cache.get("pending_idmap")||{};const chk=r=>{if(r?.error)throw r.error;return r;};for(const op of q){try{if(op.type==="upsert_set"){const sessionId=idMap[op.sessionId]||op.sessionId;if(String(sessionId).startsWith("temp_")){fail.push(op);continue;}const payload={weight_lb:op.weight,reps:op.reps};if(op.rir!=null)payload.rir=op.rir;if(op.mmc!=null)payload.mmc=op.mmc;if(op.dbId)chk(await supabase.from("workout_sets").update(payload).eq("id",op.dbId));else chk(await supabase.from("workout_sets").upsert({session_id:sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,...payload},{onConflict:"session_id,exercise_id,set_number"}));ok++;}else if(op.type==="insert_meal"){chk(await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions}));ok++;}else if(op.type==="delete_meal"){chk(await supabase.from("meal_log").delete().eq("id",op.id));ok++;}else if(op.type==="update_portions"){chk(await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id));ok++;}else if(op.type==="insert_measurement"){chk(await supabase.from("measurements").insert(op.data));ok++;}else if(op.type==="create_session"){const{data}=chk(await supabase.from("workout_sessions").insert(op.data).select().single());if(op.tempId&&data)idMap[op.tempId]=data.id;ok++;}else if(op.type==="insert_food"){chk(await supabase.from("foods").insert(op.data));ok++;}}catch{fail.push(op);}}cache.set("pending",fail);cache.set("pending_idmap",fail.length?idMap:{});return ok;}finally{flushing=false;}}
 
 let flushing=false;
+
+// DB exercise row -> the shape Session renders. Shared by the day loader and Swap.
+function toEx(e,sets){return{id:e.id,name:e.name,sets,repMin:e.rep_min,repMax:e.rep_max,increment:parseFloat(e.increment_lb)||2.5,category:e.category,cues:e.cues,muscle:e.primary_muscle,video:e.video_url,imageUrl:e.image_url,tempo:e.tempo_eccentric_sec||null,isCompound:!!e.is_compound,isCardio:!!e.is_cardio};}
 
 async function getSwapCandidates(exerciseId){
   const{data:src}=await supabase.from("exercises").select("primary_muscle,region_tag,length_bias").eq("id",exerciseId).single();
   if(!src)return[];
-  const{data:pool}=await supabase.from("exercises").select("id,name,primary_muscle,region_tag,length_bias,is_compound,priority_level").eq("primary_muscle",src.primary_muscle).neq("id",exerciseId);
+  const{data:pool}=await supabase.from("exercises").select("id,name,primary_muscle,region_tag,length_bias,is_compound,priority_level,rep_min,rep_max,increment_lb,cues,video_url,image_url,tempo_eccentric_sec,is_cardio").eq("primary_muscle",src.primary_muscle).neq("id",exerciseId);
   if(!pool)return[];
-  return pool.map(c=>{
+  return pool.filter(c=>!c.is_cardio).map(c=>{
     let score=0,tier="OK";
     if(c.region_tag&&c.region_tag===src.region_tag){score=3;tier="EXACT";}
     else if(c.length_bias&&c.length_bias===src.length_bias){score=2;tier="CLOSE";}
@@ -529,8 +537,23 @@ export default function App(){
   const[measNudgeDismissed,setMeasNudgeDismissed]=useState(()=>{const v=cache.get("dismissed_measurement_nudge");if(!v)return false;return(Date.now()-new Date(v).getTime())<7*86400000;});
   const online=useOnline();
 
-  useEffect(()=>{load();},[activeProgram]);
+  useEffect(()=>{load();syncWeek();},[activeProgram]);
   useEffect(()=>{if(online)flushPending().then(n=>{if(n>0){setPc(getPending().length);load();}});},[online]);
+  // Fresh device / cleared cache: start on whichever program is marked active in Supabase.
+  useEffect(()=>{if(cache.get("activeProgram")!=null)return;(async()=>{try{const{data}=await supabase.from("programs").select("id").eq("is_active",true).limit(1);const pid=data?.[0]?.id;if(pid&&pid!==activeProgram){setActiveProgram(pid);cache.set("activeProgram",pid);}}catch{}})();},[]);
+
+  // Week number follows training weeks: it stays on the week of your last logged session
+  // until you train in a new calendar week (Mon-Sun), then moves up by one. Gaps don't
+  // inflate it, and a finished week can't be reopened by accident. Arrows still override.
+  async function syncWeek(){
+    try{
+      const{data}=await supabase.from("workout_sessions").select("week_number,session_date,workout_sets(count)").eq("program_id",activeProgram).order("session_date",{ascending:false}).order("id",{ascending:false}).limit(15);
+      const last=(data||[]).find(s=>(s.workout_sets?.[0]?.count||0)>0);
+      if(!last)return;
+      const wk=mondayKey(localDate())>mondayKey(last.session_date)?last.week_number+1:last.week_number;
+      setWeek(wk);cache.set("week",wk);
+    }catch{}
+  }
 
   async function load(){
     setLoading(true);
@@ -538,7 +561,7 @@ export default function App(){
       const{data:d,error:dE}=await supabase.from("training_days").select("*,training_day_exercises(*,exercises(*))").eq("program_id",activeProgram).order("day_order");
       if(dE)throw dE;
       if(d){
-        const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>({id:t.exercises.id,name:t.exercises.name,sets:t.default_sets,repMin:t.exercises.rep_min,repMax:t.exercises.rep_max,increment:parseFloat(t.exercises.increment_lb)||2.5,category:t.exercises.category,cues:t.exercises.cues,muscle:t.exercises.primary_muscle,video:t.exercises.video_url,imageUrl:t.exercises.image_url,tempo:t.exercises.tempo_eccentric_sec||null}))}));
+        const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>toEx(t.exercises,t.default_sets))}));
         setDays(f);cache.set(`days_${activeProgram}`,f);
       }
       const{data:fd}=await supabase.from("foods").select("*").order("name");if(fd){setFoods(fd);cache.set("foods",fd);}
@@ -911,10 +934,10 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
     try{
       const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(reps)").eq("week_number",week).eq("program_id",activeProgram);
       if(!data?.length){setWc(null);setCompletedDays({});return;}
-      const tp=days.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);
+      const core=days.filter(d=>!isOptionalDay(d));const coreIds=new Set(core.map(d=>d.id));const tp=core.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);
       let dn=0;const cd={};
-      data.forEach(s=>{let sets=0;s.workout_sets.forEach(ws=>{if(ws.reps>0){dn++;sets++;}});if(sets>0)cd[s.training_day_id]=true;});
-      setCompletedDays(cd);setWc(tp>0?Math.round((dn/tp)*100):0);
+      data.forEach(s=>{let sets=0;s.workout_sets.forEach(ws=>{if(ws.reps>0){if(coreIds.has(s.training_day_id))dn++;sets++;}});if(sets>0)cd[s.training_day_id]=true;});
+      setCompletedDays(cd);setWc(tp>0?Math.min(100,Math.round((dn/tp)*100)):0);
     }catch{setWc(null);}
   }
 
@@ -1112,7 +1135,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[rdForm,setRdForm]=useState({sleep_hours:null,energy:null,soreness_priority:null});
   const[swapEx,setSwapEx]=useState(null);
   const[swapCandidates,setSwapCandidates]=useState([]);
-  const[swapMap,setSwapMap]=useState({});
+  const swapKey=`swaps_${day.id}_${week}_${activeProgram}`;
+  const[swapMap,setSwapMapRaw]=useState(()=>cache.get(swapKey)||{});
+  function setSwapMap(fn){setSwapMapRaw(p=>{const n=typeof fn==="function"?fn(p):fn;cache.set(swapKey,n);return n;});}
   const[prState,setPrState]=useState(null);
   const prDismissRef=useRef(null);
   const saveTimer=useRef({});
@@ -1120,6 +1145,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   sdRef.current=sd;
 
   function eff(ex){return deloadSets(ex.sets,weekType);}
+  // Keep the phone screen on while a session is open (re-acquired when the tab comes back).
+  useEffect(()=>{let lock=null;const req=async()=>{try{lock=await navigator.wakeLock?.request("screen");}catch{}};req();const vis=()=>{if(document.visibilityState==="visible")req();};document.addEventListener("visibilitychange",vis);return()=>{document.removeEventListener("visibilitychange",vis);try{lock?.release();}catch{}};},[]);
   useEffect(()=>{init();loadLast();},[day.id,week]);
   useEffect(()=>{
     if(!sid||String(sid).startsWith("temp_")||checkedReadiness)return;
@@ -1130,21 +1157,27 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     })();
   },[sid,checkedReadiness]);
 
+  // "Last time" = the most recent logged session that contains each exercise (any day,
+  // excluding this session). Laterals now appear on 4 days, so the freshest number to beat
+  // is whichever day you did them last. Keeps per-set detail for the logbook targets.
   async function loadLast(){
-    const p=week-1;
     try{
-      if(p>=1){
-        const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps,rir)").eq("week_number",p).eq("training_day_id",day.id).limit(1);
-        if(data?.[0]){
-          const byE={};data[0].workout_sets.forEach(w=>{if(!byE[w.exercise_id])byE[w.exercise_id]=[];byE[w.exercise_id].push(w);});
-          const prog={};
-          Object.entries(byE).forEach(([eid,sets])=>{const v=sets.filter(s=>s.reps>0&&s.weight_lb>0);if(!v.length)return;const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));const ex=day.exercises.find(e=>e.id===parseInt(eid));const rirAdj=progressionFromRIR(v);if(isDeload)prog[eid]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj};else{const hit=ex&&v.every(s=>s.reps>=ex.repMax);prog[eid]={w:mw,r:avg,up:hit,sw:hit&&ex?mw+ex.increment:mw,rirAdj};}});
-          setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);return;
-        }
-      }
       const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
-      const{data:fallback}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,created_at").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false});
-      if(fallback){const byE={};fallback.forEach(ws=>{if(!byE[ws.exercise_id])byE[ws.exercise_id]=ws;});const prog={};Object.entries(byE).forEach(([eid,ws])=>{const mw=ws.weight_lb;const r=ws.reps;if(isDeload)prog[eid]={w:mw,r,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true};else prog[eid]={w:mw,r,up:false,sw:mw};});setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);}
+      const{data}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(600);
+      if(!data)return;
+      const isCurrent=w=>w.workout_sessions?.week_number===week&&w.workout_sessions?.training_day_id===day.id;
+      const bySess={};data.forEach(w=>{if(isCurrent(w))return;if(!bySess[w.exercise_id])bySess[w.exercise_id]=w.session_id;});
+      const prog={};
+      day.exercises.forEach(ex=>{
+        const sessId=bySess[ex.id];if(!sessId)return;
+        const v=data.filter(w=>w.exercise_id===ex.id&&w.session_id===sessId).sort((a,b)=>a.set_number-b.set_number);if(!v.length)return;
+        const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));
+        const rirAdj=progressionFromRIR(v);
+        const sets=v.map(x=>({w:x.weight_lb,r:x.reps}));const when=v[0].workout_sessions?.session_date||null;
+        if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when};
+        else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when};}
+      });
+      setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);
     }catch{const c=cache.get(`lw_${day.id}_${week}`);if(c)setLw(c);}
   }
 
@@ -1155,10 +1188,10 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   async function init(){
     const ck=`session_${day.id}_${week}_${activeProgram}`;
     try{
-      const{data}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);
+      const{data,error:se}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);if(se)throw se;
       if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
-      else{const{data:n}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
-    }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets);}else{const tid=`temp_${Date.now()}`;setSid(tid);addPending({type:"create_session",data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
+      else{const{data:n,error:ne}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(ne)throw ne;if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
+    }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets||{});}else{const tid=`temp_${Date.now()}`;setSid(tid);cache.set(ck,{sid:tid,sets:{}});addPending({type:"create_session",tempId:tid,data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
   }
 
   async function saveNotes(val){setNotes(val);if(!sid||String(sid).startsWith("temp_"))return;try{await supabase.from("workout_sessions").update({notes:val}).eq("id",sid);setNotesSaved(true);setTimeout(()=>setNotesSaved(false),1500);}catch{}}
@@ -1171,8 +1204,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
   }
 
-  async function sv(eid,sn,overrides={}){if(!sid||String(sid).startsWith("temp_"))return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);
-    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId)await supabase.from("workout_sets").update(payload).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,...payload}).select().single();if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
+  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
+    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId){const{error:ue}=await supabase.from("workout_sets").update(payload).eq("id",d.dbId);if(ue)throw ue;}else{const{data:ins,error:ie}=await supabase.from("workout_sets").upsert({session_id:sid,exercise_id:eid,set_number:sn,...payload},{onConflict:"session_id,exercise_id,set_number"}).select().single();if(ie)throw ie;if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
       if(savedRowId&&d.weight>0&&d.reps>0&&weekType!=="Deload"){
         const currE1=epley1RM(d.weight,d.reps);
         const{data:prior}=await supabase.from("workout_sets").select("weight_lb,reps,exercises(name)").eq("exercise_id",eid).neq("id",savedRowId).gt("weight_lb",0).gt("reps",0);
@@ -1185,7 +1218,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           prDismissRef.current=setTimeout(()=>setPrState(null),4000);
         }
       }
-    }catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
+    }catch{queue();}
     setSaved(new Date().toLocaleTimeString());}
   function adj(eid,sn,field,delta){const k=`${eid}-${sn}`,curr=sdRef.current[k]?.[field]||0;const newVal=field==="reps"?Math.max(0,Math.round(curr+delta)):Math.max(0,Math.round((curr+delta)*100)/100);const updates={weight:sdRef.current[k]?.weight||0,reps:sdRef.current[k]?.reps||0,[field]:newVal};setSd(p=>({...p,[k]:{...p[k],...updates}}));sv(eid,sn,updates);}
 
@@ -1258,8 +1291,10 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           const es=eff(ex),isE=expEx===xi,dn=done(ex.id,es),all=dn===es,pg=lw[ex.id];
           const rirAdj=pg?.rirAdj;
           const rirBump=!pg?.deload&&rirAdj?.delta===1?(ex.increment||2.5):0;
-          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw+rirBump:pg.w+rirBump):null;
-          const todayWeight=rawWeight&&readiness?.intensity_modifier?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
+          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w+rirBump):null;
+          const todayWeight=rawWeight&&ex.isCompound&&readiness?.intensity_modifier<1?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
+          const tgtReps=i=>{if(!pg||pg.deload)return null;if(pg.up)return ex.repMin;const l=pg.sets?.[i];if(!l)return null;return l.r>=ex.repMax?ex.repMax:l.r+1;};
+          const restFor=restDur||(ex.isCompound?180:90);
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
               <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);setShowTimer(false);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
@@ -1283,7 +1318,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   </div>
                   {swapEx===xi&&(
                     <div style={{background:C.sf2,borderRadius:10,border:`1px solid ${C.bd}`,padding:10,marginBottom:10}}>
-                      <div style={{fontSize:11,fontWeight:600,color:C.tx,marginBottom:8}}>Swap: <span style={{color:C.mt}}>{origEx.name}</span></div>
+                      <div style={{fontSize:11,fontWeight:600,color:C.tx,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span>Swap: <span style={{color:C.mt}}>{origEx.name}</span></span>{swapMap[origEx.id]&&<button onClick={()=>{setSwapMap(p=>{const n={...p};delete n[origEx.id];return n;});setSwapEx(null);}} style={{...btnGhost,padding:"3px 8px",fontSize:10}}>Use original</button>}</div>
                       {swapCandidates.length===0&&<div style={{fontSize:11,color:C.mt,textAlign:"center",padding:"10px 0"}}>No alternatives found</div>}
                       {[{tier:"EXACT",label:"Best match"},{tier:"CLOSE",label:"Similar"},{tier:"OK",label:"Same muscle"}].map(({tier,label})=>{
                         const group=swapCandidates.filter(c=>c._tier===tier);
@@ -1293,7 +1328,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                           {group.map(c=>{
                             const biasColor=c.length_bias==="lengthened"?C.gn:c.length_bias==="shortened"?C.am:null;
                             const biasLabel=c.length_bias==="lengthened"?"long":c.length_bias==="shortened"?"short":c.length_bias==="mid-range"?"mid":null;
-                            return(<button key={c.id} onClick={()=>{setSwapMap(p=>({...p,[origEx.id]:c}));setSwapEx(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:swapMap[origEx.id]?.id===c.id?`${C.ac}12`:C.sf,border:`1px solid ${swapMap[origEx.id]?.id===c.id?`${C.ac}44`:C.bd}`,borderRadius:8,marginBottom:4,cursor:"pointer",textAlign:"left"}}>
+                            return(<button key={c.id} onClick={()=>{setSwapMap(p=>({...p,[origEx.id]:toEx(c,origEx.sets)}));setSwapEx(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:swapMap[origEx.id]?.id===c.id?`${C.ac}12`:C.sf,border:`1px solid ${swapMap[origEx.id]?.id===c.id?`${C.ac}44`:C.bd}`,borderRadius:8,marginBottom:4,cursor:"pointer",textAlign:"left"}}>
                               {c.priority_level==="HIGH"&&<span style={{fontSize:8,color:C.ac,fontWeight:700,flexShrink:0}}>★</span>}
                               <span style={{fontSize:12,color:C.tx,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</span>
                               {biasLabel&&<span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:biasColor?`${biasColor}14`:C.sf2,color:biasColor||C.mt,fontFamily:mono,flexShrink:0}}>{biasLabel}</span>}
@@ -1326,11 +1361,12 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <button onClick={()=>fill(ex.id,es,todayWeight||0)} style={{padding:"7px 12px",background:pg?.up?`${C.gn}10`:pg?.deload?`${C.am}10`:C.sf2,border:`1px solid ${pg?.up?`${C.gn}33`:pg?.deload?`${C.am}33`:C.bd}`,borderRadius:8,color:pg?.up?C.gn:pg?.deload?C.am:C.mt,fontSize:12,fontWeight:600,cursor:"pointer"}}>Fill {todayWeight||0}lb</button>
                     {pg?.up&&<button onClick={()=>fill(ex.id,es,pg.w)} style={{padding:"7px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer"}}>Keep {pg.w}lb</button>}
                   </div>
-                  {showTimer?<Timer key={timerKey} duration={restDur} onDismiss={()=>setShowTimer(false)}/>
+                  {showTimer?<Timer key={timerKey} duration={restFor} onDismiss={()=>setShowTimer(false)}/>
                   :<button onClick={startTimer} style={{width:"100%",padding:"9px",marginBottom:10,background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                    Start rest timer ({Math.floor(restDur/60)}:{String(restDur%60).padStart(2,"0")})
+                    Start rest timer ({Math.floor(restFor/60)}:{String(restFor%60).padStart(2,"0")})
                   </button>}
+                  {pg?.sets?.length>0&&!pg.deload&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,lineHeight:1.5}}>Last{pg.when?` (${pg.when.slice(5)})`:""}: <span style={{color:C.tx2}}>{pg.sets.map(x=>`${x.w}×${x.r}`).join(" · ")}</span><br/><span style={{color:pg.up?C.gn:C.ac}}>{pg.up?`Top of range hit. ${pg.sw}lb × ${ex.repMin}+ today`:"Beat it: +1 rep per set (grey numbers), same weight"}</span></div>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
                     return(<div key={i} style={{marginBottom:6}}>
@@ -1338,15 +1374,15 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                         <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div>
                         <div style={{display:"flex",alignItems:"center",gap:3}}>
                           <button onClick={()=>adj(ex.id,sn,"weight",-ex.increment)} style={{...tbtn,flexShrink:0}}>-</button>
-                          <input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
+                          <input type="number" inputMode="decimal" value={s.weight||""} placeholder={todayWeight?`${todayWeight}`:"lbs"} onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
                           <button onClick={()=>adj(ex.id,sn,"weight",ex.increment)} style={{...tbtn,flexShrink:0}}>+</button>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:3}}>
                           <button onClick={()=>adj(ex.id,sn,"reps",-1)} style={{...tbtn,flexShrink:0}}>-</button>
-                          <input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
+                          <input type="number" inputMode="numeric" value={s.reps||""} placeholder={tgtReps(i)!=null?`${tgtReps(i)}`:`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
                           <button onClick={()=>adj(ex.id,sn,"reps",1)} style={{...tbtn,flexShrink:0}}>+</button>
                         </div>
-                        <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
+                        <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"top":lo?"low":ok?"ok":""}</div>
                       </div>
                       {ok&&<div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center",marginTop:4}}>
                         <div/>
