@@ -150,6 +150,15 @@ function stallCheck(exp){
   const stalled=bestRecent<=bestPrior*1.005;
   return{stalled:stalled&&gapDays<21,rebuilding:stalled&&gapDays>=21,bestPrior,bestRecent,lastDate:last[2].date,n:exp.length};
 }
+async function computeStalls(){
+  const rows=await fetchAll(()=>supabase.from("workout_sets").select("exercise_id,session_id,weight_lb,reps,exercises(name,is_compound),workout_sessions(session_date,week_type)").gt("reps",0).gt("weight_lb",0).order("id"));
+  const by={};rows.forEach(r=>{(by[r.exercise_id]=by[r.exercise_id]||{name:r.exercises?.name,isCompound:!!r.exercises?.is_compound,rows:[]}).rows.push(r);});
+  const today=dayNum(localDate());
+  return Object.values(by).map(e=>{const exp=exposuresFromSets(e.rows);return{name:e.name,isCompound:e.isCompound,st:stallCheck(exp),last:exp.length?exp[exp.length-1].date:null};}).filter(e=>e.st&&e.last&&today-dayNum(e.last)<=60);
+}
+// What to add when a priority muscle is behind for the week.
+const CARRYOVER_EX={"Side Delts":"lateral raises","Lats":"pulldowns","Upper Chest":"low-to-high cable flys","Biceps":"curls","Triceps":"overhead triceps extensions","Rear Delts":"rear delt flys"};
+
 function stallTip(isCompound){return isCompound?"Drop the load about 10% and build back up over 3 sessions, or swap to a close variation.":"Add reps before load, use a smaller jump (cable or machine), or add one set.";}
 
 // Supabase returns at most 1,000 rows per request; page through when a view needs all history.
@@ -589,13 +598,28 @@ function CaliWorkoutsSection({ supabase }) {
   return null;
 }
 
+// ── CSV export (your own data only; RLS scopes every query to the signed-in user) ──
+function toCSV(rows,cols){const esc=v=>{if(v==null)return"";const t=String(v);return/[",\n]/.test(t)?`"${t.replace(/"/g,'""')}"`:t;};return[cols.map(c=>c[0]).join(","),...rows.map(r=>cols.map(c=>esc(c[1](r))).join(","))].join("\n");}
+function downloadText(name,text){const blob=new Blob([text],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
+async function exportCSV(kind){
+  const stamp=localDate();
+  if(kind==="workouts"){const rows=await fetchAll(()=>supabase.from("workout_sets").select("set_number,weight_lb,reps,rir,mmc,is_pr,exercises(name,primary_muscle),workout_sessions(session_date,week_number,week_type,training_days(name))").order("id"));
+    rows.sort((a,b)=>(a.workout_sessions?.session_date||"").localeCompare(b.workout_sessions?.session_date||""));
+    downloadText(`ironlog-workouts-${stamp}.csv`,toCSV(rows,[["date",r=>r.workout_sessions?.session_date],["week",r=>r.workout_sessions?.week_number],["week_type",r=>r.workout_sessions?.week_type],["day",r=>r.workout_sessions?.training_days?.name],["exercise",r=>r.exercises?.name],["muscle",r=>r.exercises?.primary_muscle],["set",r=>r.set_number],["weight_lb",r=>r.weight_lb],["reps",r=>r.reps],["rir",r=>r.rir],["mmc",r=>r.mmc],["pr",r=>r.is_pr?"yes":""]]));}
+  else if(kind==="food"){const rows=await fetchAll(()=>supabase.from("meal_log").select("log_date,portions,foods(name,protein_g,carbs_g,fat_g,calories)").order("id"));
+    downloadText(`ironlog-food-${stamp}.csv`,toCSV(rows,[["date",r=>r.log_date],["food",r=>r.foods?.name],["portions",r=>r.portions],["protein_g",r=>Math.round((r.foods?.protein_g||0)*r.portions)],["carbs_g",r=>Math.round((r.foods?.carbs_g||0)*r.portions)],["fat_g",r=>Math.round((r.foods?.fat_g||0)*r.portions)],["kcal",r=>Math.round((r.foods?.calories||0)*r.portions)]]));}
+  else{const rows=await fetchAll(()=>supabase.from("measurements").select("*").order("measure_date"));
+    const cols=["measure_date","bodyweight_lb","body_fat_pct","waist_in","chest_in","shoulder_circ_in","r_arm_in","l_arm_in","thigh_in","calf_in","neck_in","hips_in","notes"];
+    downloadText(`ironlog-body-${stamp}.csv`,toCSV(rows,cols.map(c=>[c,r=>r[c]])));}
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 // Supabase Auth gates the app. Data access is limited by RLS to emails in
 // private.app_users (see migration auth_allowlist_and_authenticated_policies).
 // The session is kept in localStorage by supabase-js, so this works offline once signed in.
 
 async function authHeaders(){try{const{data}=await supabase.auth.getSession();const t=data?.session?.access_token;return t?{Authorization:`Bearer ${t}`}:{};}catch{return{};}}
-async function signOut(){try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));}
+async function signOut(){try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));try{navigator.serviceWorker?.controller?.postMessage("clear-caches");if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch{}}
 
 function Splash({msg}){return(<div style={{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:sans}}><div style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:C.tx,letterSpacing:"0.05em"}}>IRON<span style={{color:C.ac}}>LOG</span></div><div style={{fontSize:11,color:C.mt,marginTop:8}}>{msg||"Loading..."}</div></div></div>);}
 
@@ -1109,6 +1133,8 @@ function DaySelect({userEmail,days,onSelect,week,setWeek,restDur,setRestDur,week
   const[summary,setSummary]=useState(null);
   const[showSum,setShowSum]=useState(false);
   const[dismissedDL,setDismissedDL]=useState(false);
+  const[stalledNames,setStalledNames]=useState(()=>(cache.get("stalls")||[]).filter(e=>e.st?.stalled).map(e=>e.name));
+  useEffect(()=>{if(!online)return;computeStalls().then(out=>{cache.set("stalls",out);setStalledNames(out.filter(e=>e.st?.stalled).map(e=>e.name));}).catch(()=>{});},[activeProgram]);
   const[completedDays,setCompletedDays]=useState({});
   const[showBWInput,setShowBWInput]=useState(false);
   const[bwInput,setBwInput]=useState("");
@@ -1267,9 +1293,14 @@ function DaySelect({userEmail,days,onSelect,week,setWeek,restDur,setRestDur,week
         {summary&&<button onClick={()=>setShowSum(!showSum)} style={{...btnGhost,fontSize:10,padding:"4px 10px",color:showSum?C.ac:C.mt,borderColor:showSum?`${C.ac}40`:C.bd,flexShrink:0}}>{showSum?"Close":"Summary"}</button>}
       </div>
 
-      {week%4===0&&!isDL&&!dismissedDL&&(
+      {summary&&summary.sessionsLogged>=3&&(()=>{const behind=Object.entries(VOL_TARGETS).filter(([m,t])=>t.priority==="HIGH"&&CARRYOVER_EX[m]&&(summary.muscles[m]||0)<t.min).map(([m,t])=>({m,have:summary.muscles[m]||0,need:t.min}));if(!behind.length)return null;return(
+        <div style={{background:`${C.ac}0d`,border:`1px solid ${C.ac}33`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.ac,marginBottom:4}}>Priority muscles behind this week</div>
+          {behind.slice(0,3).map(b=><div key={b.m} style={{fontSize:11,color:C.tx2,marginTop:2}}>{b.m} {fmtSets(b.have)}/{b.need} sets: add {Math.min(4,Math.ceil(b.need-b.have))} sets of {CARRYOVER_EX[b.m]} to your next session</div>)}
+        </div>);})()}
+      {stalledNames.length>=3&&!isDL&&!dismissedDL&&(
         <div style={{background:`${C.am}10`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.am}}>Deload week?</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} is typically a deload in a 16-week block.</div></div>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.am}}>Deload week?</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>{stalledNames.length} lifts have stalled ({stalledNames.slice(0,3).join(", ")}{stalledNames.length>3?"…":""}). A week at 2 sets and ~60% load usually clears built-up fatigue.</div></div>
           <button onClick={()=>{setWeekType("Deload");setDismissedDL(true);}} style={{padding:"6px 12px",background:`${C.am}18`,border:`1px solid ${C.am}44`,borderRadius:8,color:C.am,fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>Switch</button>
           <button onClick={()=>setDismissedDL(true)} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button>
         </div>
@@ -1305,7 +1336,8 @@ function DaySelect({userEmail,days,onSelect,week,setWeek,restDur,setRestDur,week
               {[0,60,90,120,150,180,240].map(t=><button key={t} onClick={()=>setRestDur(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${restDur===t?C.ac:C.bd}`,background:restDur===t?`${C.ac}15`:"transparent",color:restDur===t?C.ac:C.mt,fontSize:12,fontFamily:mono,cursor:"pointer"}}>{t===0?"Auto":`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`}</button>)}
             </div>
           </div>
-          <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.bd}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span style={{fontSize:11,color:C.mt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Signed in as {userEmail||"?"}</span><button onClick={signOut} style={{...btnGhost,padding:"6px 12px",fontSize:11,flexShrink:0}}>Sign out</button></div>
+          <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.bd}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span style={{fontSize:11,color:C.mt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Signed in as {userEmail||"?"}</span></div>
+          <div style={{marginTop:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontSize:11,color:C.mt,marginRight:2}}>Export CSV:</span>{[["workouts","Workouts"],["food","Food"],["body","Body"]].map(([k,l])=><button key={k} onClick={()=>exportCSV(k).catch(e=>console.error("export failed",e))} style={{...btnGhost,padding:"5px 10px",fontSize:11}}>{l}</button>)}<span style={{flex:1}}/><button onClick={signOut} style={{...btnGhost,padding:"6px 12px",fontSize:11,flexShrink:0}}>Sign out</button></div>
         </div>
       )}
 
@@ -1349,6 +1381,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[swapMap,setSwapMapRaw]=useState(()=>cache.get(swapKey)||{});
   function setSwapMap(fn){setSwapMapRaw(p=>{const n=typeof fn==="function"?fn(p):fn;cache.set(swapKey,n);return n;});}
   const[prState,setPrState]=useState(null);
+  const[span,setSpan]=useState(null);
   const prDismissRef=useRef(null);
   const saveTimer=useRef({});
   const sdRef=useRef({});
@@ -1400,7 +1433,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     const ck=`session_${day.id}_${week}_${activeProgram}`;
     try{
       const{data,error:se}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);if(se)throw se;
-      if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
+      if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");{const ts=(data[0].workout_sets||[]).filter(w=>w.reps>0&&w.created_at).map(w=>new Date(w.created_at).getTime());if(ts.length)setSpan({start:Math.min(...ts),end:Math.max(...ts)});}const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
       else{const{data:n,error:ne}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(ne)throw ne;if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
     }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets||{});}else{const tid=`temp_${Date.now()}`;setSid(tid);cache.set(ck,{sid:tid,sets:{}});addPending({type:"create_session",tempId:tid,data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
   }
@@ -1415,7 +1448,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
   }
 
-  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
+  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};const wasDone=(cached.sets[k]?.reps||0)>0;if(!wasDone&&d.reps>0){startTimer();setSpan(p=>({start:p?.start||Date.now(),end:Date.now()}));}else if(d.reps>0)setSpan(p=>p?{...p,end:Date.now()}:{start:Date.now(),end:Date.now()});cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
     const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId){const{error:ue}=await supabase.from("workout_sets").update(payload).eq("id",d.dbId);if(ue)throw ue;}else{const{data:ins,error:ie}=await supabase.from("workout_sets").upsert({session_id:sid,exercise_id:eid,set_number:sn,...payload},{onConflict:"session_id,exercise_id,set_number"}).select().single();if(ie)throw ie;if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
       if(savedRowId&&d.weight>0&&d.reps>0&&weekType!=="Deload"){
         const currE1=epley1RM(d.weight,d.reps);
@@ -1443,7 +1476,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     <div style={{padding:"20px 16px"}}>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
         <button onClick={onBack} style={sbtn}>‹</button>
-        <div style={{flex:1,minWidth:0}}><div style={{fontSize:18,fontWeight:700}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} · {weekType} · {progName}</div></div>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:18,fontWeight:700}}>{day.name}</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>W{week} · {weekType} · {progName}{span&&<span style={{fontFamily:mono}}> · {Math.max(1,Math.round((span.end-span.start)/60000))} min</span>}</div></div>
         <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:18,fontWeight:700,fontFamily:mono,color:comp===100?C.gn:comp>0?C.am:C.mt}}>{comp}%</div><div style={{fontSize:8,color:C.mt,fontFamily:mono,marginTop:1,textTransform:"uppercase",letterSpacing:"0.06em"}}>{comp===100?"complete":"done"}</div>{saved&&<div style={{fontSize:8,color:C.gn,fontFamily:mono,marginTop:1}}>{saved}</div>}</div>
       </div>
       <div style={{width:"100%",height:6,background:C.bd,borderRadius:3,marginBottom:10,overflow:"hidden"}}><div style={{width:`${comp}%`,height:"100%",background:comp===100?C.gn:C.ac,borderRadius:3,transition:"width 0.3s"}}/></div>
@@ -1506,6 +1539,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           const todayWeight=rawWeight&&ex.isCompound&&readiness?.intensity_modifier<1?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
           const tgtReps=i=>{if(!pg||pg.deload)return null;if(pg.up)return ex.repMin;const l=pg.sets?.[i];if(!l)return null;return l.r>=ex.repMax?ex.repMax:l.r+1;};
           const restFor=restDur||(ex.isCompound?180:90);
+          const firstCompound=xi===day.exercises.findIndex(e=>(swapMap[e.id]||e).isCompound);
+          const warmups=firstCompound&&todayWeight&&todayWeight>=40&&!isDeload&&done(ex.id,es)===0?[[0.5,8],[0.7,4],[0.85,2]].map(([pct,r])=>({w:Math.max(0,Math.round(todayWeight*pct/(ex.increment||2.5))*(ex.increment||2.5)),r})):null;
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
               <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);setShowTimer(false);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
@@ -1578,6 +1613,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                     Start rest timer ({Math.floor(restFor/60)}:{String(restFor%60).padStart(2,"0")})
                   </button>}
+                  {warmups&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,padding:"6px 8px",background:C.sf2,borderRadius:6}}>Warm-up (not logged): <span style={{color:C.tx2}}>{warmups.map(w=>`${w.w}×${w.r}`).join(" · ")}</span></div>}
                   {pg?.sets?.length>0&&!pg.deload&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,lineHeight:1.5}}>Last{pg.when?` (${pg.when.slice(5)})`:""}: <span style={{color:C.tx2}}>{pg.sets.map(x=>`${x.w}×${x.r}`).join(" · ")}</span><br/><span style={{color:pg.up?C.gn:C.ac}}>{pg.up?`Top of range hit. ${pg.sw}lb × ${ex.repMin}+ today`:"Beat it: +1 rep per set (grey numbers), same weight"}</span>{pg.stall?.stalled&&<><br/><span style={{color:C.rd}}>No progress in 3 sessions (best e1RM {Math.round(pg.stall.bestRecent)} vs {Math.round(pg.stall.bestPrior)}). {stallTip(ex.isCompound)}</span></>}{pg.stall?.rebuilding&&<><br/><span style={{color:C.am}}>Rebuilding after a break: {Math.round(pg.stall.bestRecent)} vs {Math.round(pg.stall.bestPrior)} e1RM before it. Usually back within a few sessions.</span></>}</div>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
@@ -1781,6 +1817,8 @@ function Body({mt,meas,onAdd,online,onPC}){
     <div style={{padding:"20px 16px"}}>
       <div style={{fontSize:20,fontWeight:700,marginBottom:16}}>Body</div>
       <WeightTrendCard wt={wt} goal={mt?.goalName||"Maintain"}/>
+      <VTaperCard meas={meas}/>
+      <ProgressPhotos latestBW={wt?.last?.w||null}/>
       {lat&&(<div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
           <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"16px 14px"}}><div style={{...lbl,marginBottom:6}}>Bodyweight</div><div style={{fontSize:28,fontWeight:800,fontFamily:mono,lineHeight:1}}>{lat.bodyweight_lb??<span style={{color:C.mt}}>—</span>}</div><div style={{fontSize:11,color:C.mt,marginTop:4}}>lb{wtDelta&&<span style={{color:parseFloat(wtDelta)>0?C.am:C.gn,marginLeft:5}}>{wtDelta}</span>}</div></div>
@@ -1799,6 +1837,106 @@ function Body({mt,meas,onAdd,online,onPC}){
       {showF&&(<div style={{...card,marginBottom:12}}><div style={{fontSize:10,color:C.mt,marginBottom:10}}>BF% auto-calculates from waist + neck</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{fields.map(f=>(<div key={f.k}><label style={{fontSize:8,color:f.k==="waist_in"||f.k==="neck_in"?C.ac:C.mt,textTransform:"uppercase",letterSpacing:"0.06em"}}>{f.l}</label><input type={f.t} inputMode={f.t==="number"?"decimal":undefined} value={fm[f.k]} onChange={e=>setFm(p=>({...p,[f.k]:e.target.value}))} style={{...inp,marginTop:3,fontSize:13}}/></div>))}</div>{fm.waist_in&&fm.neck_in&&<div style={{marginTop:10,padding:"6px 10px",background:`${C.ac}08`,borderRadius:6,fontSize:12,color:C.ac,textAlign:"center"}}>Est. BF: {navyBF(parseFloat(fm.waist_in),parseFloat(fm.neck_in),meas[meas.length-1]?.height_in||70)||"—"}%</div>}<button onClick={save} style={{...btnP,marginTop:12}}>Save</button></div>)}
       <div style={{...lbl,marginBottom:8}}>History</div>
       {[...meas].reverse().map(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return(<div key={m.id} style={{background:C.sf,borderRadius:10,border:`1px solid ${C.bd}`,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:10,color:C.mt}}>{m.measure_date}</div><div style={{fontSize:16,fontWeight:700,fontFamily:mono}}>{m.bodyweight_lb} lb</div></div><div style={{fontSize:10,color:C.mt,fontFamily:mono,textAlign:"right"}}>{bf&&<div style={{color:C.ac,marginBottom:2}}>BF {bf}%</div>}<div>{m.chest_in?`Ch ${m.chest_in}″`:""}{m.r_arm_in?` · A ${m.r_arm_in}″`:""}</div></div></div>);})}
+    </div>
+  );
+}
+
+// Shoulder circumference / waist: one number that only improves if delts and lats
+// grow or the waist comes down. Tracked over time, not judged against an "ideal".
+function VTaperCard({meas}){
+  const pts=(meas||[]).filter(m=>parseFloat(m.shoulder_circ_in)>0&&parseFloat(m.waist_in)>0).map((m,i)=>({x:i+1,y:Math.round(parseFloat(m.shoulder_circ_in)/parseFloat(m.waist_in)*1000)/1000,label:m.measure_date?.slice(5)}));
+  if(!pts.length)return null;
+  const last=pts[pts.length-1],first=pts[0],d=last.y-first.y;
+  return(
+    <div style={{...card,marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+        <span style={{...lbl,color:C.ac}}>V-taper</span>
+        <span style={{fontSize:10,color:C.mt}}>shoulders ÷ waist</span>
+      </div>
+      <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:pts.length>1?6:0}}>
+        <span style={{fontSize:24,fontWeight:800,fontFamily:mono}}>{last.y.toFixed(3)}</span>
+        {pts.length>1&&<span style={{fontSize:12,fontFamily:mono,color:d>=0?C.gn:C.rd}}>{d>=0?"+":""}{d.toFixed(3)} since {first.label}</span>}
+      </div>
+      {pts.length>1&&<LineChart points={pts} color={C.ac} height={70}/>}
+      <div style={{fontSize:9,color:C.mt,marginTop:4}}>From Shoulders and Waist in your measurements. Goes up when delts and lats grow or the waist drops.</div>
+    </div>
+  );
+}
+
+// Private progress photos: Supabase Storage bucket progress-photos/<user id>/..., rows in
+// public.progress_photos. Images are resized on the phone (max 1280px JPEG) before upload.
+const POSES=["front","side","back"];
+async function shrinkImage(file,max=1280,q=0.82){
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});
+    const sc=Math.min(1,max/Math.max(img.width,img.height));const cv=document.createElement("canvas");cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+    cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+    return await new Promise(res=>cv.toBlob(b=>res(b),"image/jpeg",q));
+  }finally{URL.revokeObjectURL(url);}
+}
+function ProgressPhotos({latestBW}){
+  const[rows,setRows]=useState(null);const[urls,setUrls]=useState({});
+  const[pose,setPose]=useState("front");const[date,setDate]=useState(localDate());
+  const[busy,setBusy]=useState(false);const[err,setErr]=useState(null);
+  const[cmp,setCmp]=useState({pose:"front",a:null,b:null});const[delId,setDelId]=useState(null);
+  const fileRef=useRef(null);
+  async function load(){
+    try{
+      const{data,error}=await supabase.from("progress_photos").select("*").order("taken_on",{ascending:true}).order("id");if(error)throw error;
+      setRows(data||[]);
+      const paths=(data||[]).map(r=>r.path);
+      if(paths.length){const{data:signed}=await supabase.storage.from("progress-photos").createSignedUrls(paths,3600);const m={};(signed||[]).forEach(x=>{if(x.signedUrl)m[x.path]=x.signedUrl;});setUrls(m);}
+    }catch(e){setErr(e?.message||"Couldn't load photos");setRows([]);}
+  }
+  useEffect(()=>{load();},[]);
+  async function upload(e){
+    const file=e.target.files?.[0];e.target.value="";if(!file)return;
+    setBusy(true);setErr(null);
+    try{
+      const{data:sess}=await supabase.auth.getSession();const uid=sess?.session?.user?.id;if(!uid)throw new Error("Not signed in");
+      const blob=await shrinkImage(file);const path=`${uid}/${date}-${pose}-${Date.now()}.jpg`;
+      const{error:ue}=await supabase.storage.from("progress-photos").upload(path,blob,{contentType:"image/jpeg"});if(ue)throw ue;
+      const{error:ie}=await supabase.from("progress_photos").insert({taken_on:date,pose,path,bodyweight_lb:latestBW});if(ie){await supabase.storage.from("progress-photos").remove([path]);throw ie;}
+      await load();
+    }catch(e2){setErr(e2?.message||"Upload failed");}
+    setBusy(false);
+  }
+  async function del(r){
+    try{const{error}=await supabase.from("progress_photos").delete().eq("id",r.id);if(error)throw error;await supabase.storage.from("progress-photos").remove([r.path]);setDelId(null);await load();}catch(e){setErr(e?.message||"Delete failed");}
+  }
+  const byPose=(rows||[]).filter(r=>r.pose===cmp.pose);
+  const dates=[...new Set(byPose.map(r=>r.taken_on))];
+  const aDate=cmp.a&&dates.includes(cmp.a)?cmp.a:dates[0];const bDate=cmp.b&&dates.includes(cmp.b)?cmp.b:dates[dates.length-1];
+  const pick=d=>byPose.filter(r=>r.taken_on===d).slice(-1)[0];
+  const A=pick(aDate),B=pick(bDate);
+  const chip=on=>({padding:"5px 10px",borderRadius:8,border:`1px solid ${on?C.ac:C.bd}`,background:on?`${C.ac}15`:"transparent",color:on?C.ac:C.mt,fontSize:11,cursor:"pointer",textTransform:"capitalize"});
+  return(
+    <div style={{...card,marginBottom:12}}>
+      <div style={{...lbl,color:C.ac,marginBottom:10}}>Progress photos</div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+        {POSES.map(p=><button key={p} onClick={()=>setPose(p)} style={chip(pose===p)}>{p}</button>)}
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,width:"auto",fontSize:12,padding:"5px 8px",flex:1,minWidth:120}}/>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={upload} style={{display:"none"}}/>
+      <button disabled={busy} onClick={()=>fileRef.current?.click()} style={{...btnS,marginBottom:10,opacity:busy?0.5:1}}>{busy?"Uploading...":`+ Add ${pose} photo`}</button>
+      {err&&<div style={{fontSize:11,color:C.rd,marginBottom:8}}>{err}</div>}
+      <div style={{fontSize:10,color:C.mt,marginBottom:10}}>Same spot, same light, same time of day (morning, before eating) every 2 weeks makes the comparison honest. Photos are private to your account.</div>
+      {rows&&rows.length>0&&(<>
+        <div style={{...lbl2,marginBottom:6}}>Compare</div>
+        <div style={{display:"flex",gap:6,marginBottom:8}}>{POSES.map(p=><button key={p} onClick={()=>setCmp(c=>({...c,pose:p}))} style={chip(cmp.pose===p)}>{p}</button>)}</div>
+        {dates.length===0?<div style={{fontSize:11,color:C.mt}}>No {cmp.pose} photos yet.</div>:(<>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+            {[{d:aDate,set:v=>setCmp(c=>({...c,a:v}))},{d:bDate,set:v=>setCmp(c=>({...c,b:v}))}].map((s2,i)=><select key={i} value={s2.d} onChange={e=>s2.set(e.target.value)} style={{...inpL,fontSize:12,padding:"6px 8px"}}>{dates.map(d=><option key={d} value={d}>{d}</option>)}</select>)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            {[A,B].map((r,i)=><div key={i} style={{background:C.sf2,borderRadius:8,overflow:"hidden",position:"relative",aspectRatio:"3/4"}}>
+              {r&&urls[r.path]?<img src={urls[r.path]} alt={`${r.pose} ${r.taken_on}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>:<div style={{fontSize:10,color:C.mt,padding:8}}>—</div>}
+              {r&&<div style={{position:"absolute",left:0,right:0,bottom:0,padding:"4px 6px",background:"#000a",fontSize:10,fontFamily:mono,color:C.tx,display:"flex",justifyContent:"space-between"}}><span>{r.taken_on}{r.bodyweight_lb?` · ${r.bodyweight_lb}lb`:""}</span>{delId===r.id?<span style={{display:"flex",gap:6}}><button onClick={()=>del(r)} style={{background:"none",border:"none",color:C.rd,fontSize:10,cursor:"pointer",padding:0}}>Delete</button><button onClick={()=>setDelId(null)} style={{background:"none",border:"none",color:C.mt,fontSize:10,cursor:"pointer",padding:0}}>Keep</button></span>:<button onClick={()=>setDelId(r.id)} style={{background:"none",border:"none",color:C.mt,fontSize:12,cursor:"pointer",padding:0,lineHeight:1}}>×</button>}</div>}
+            </div>)}
+          </div>
+        </>)}
+      </>)}
     </div>
   );
 }
@@ -1859,7 +1997,7 @@ function Stats({meas,week,online,activeProgram}){
   const[prs,setPrs]=useState([]);const[vol,setVol]=useState({});const[muscleTrend,setMuscleTrend]=useState({});const[view,setView]=useState("prs");const[selMuscle,setSelMuscle]=useState(null);
   const[reviewWeek,setReviewWeek]=useState(week);const[reviewData,setReviewData]=useState(null);const[stalls,setStalls]=useState(null);
   useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();getWeekReview(reviewWeek);loadStalls();},[week,activeProgram]);
-  async function loadStalls(){try{const rows=await fetchAll(()=>supabase.from("workout_sets").select("exercise_id,session_id,weight_lb,reps,exercises(name,is_compound),workout_sessions(session_date,week_type)").gt("reps",0).gt("weight_lb",0).order("id"));const by={};rows.forEach(r=>{(by[r.exercise_id]=by[r.exercise_id]||{name:r.exercises?.name,isCompound:!!r.exercises?.is_compound,rows:[]}).rows.push(r);});const today=dayNum(localDate());const out=Object.values(by).map(e=>{const exp=exposuresFromSets(e.rows);const st=stallCheck(exp);return{...e,rows:undefined,st,last:exp.length?exp[exp.length-1].date:null};}).filter(e=>e.st&&e.last&&today-dayNum(e.last)<=60);setStalls(out);cache.set("stalls",out);}catch{const c=cache.get("stalls");if(c)setStalls(c);}}
+  async function loadStalls(){try{const out=await computeStalls();setStalls(out);cache.set("stalls",out);}catch{const c=cache.get("stalls");if(c)setStalls(c);}}
   useEffect(()=>{getWeekReview(reviewWeek);},[reviewWeek]);
   async function getWeekReview(wk){
     try{
