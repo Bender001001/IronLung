@@ -78,7 +78,7 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Progression triggers require ALL sets to hit repMax, not average
 
-\- Supabase new tables have RLS enabled by default — add an `anon` policy (see existing `anon_read` / `anon_all`) rather than disabling RLS
+\- Supabase new tables have RLS enabled by default. There are no `anon` policies (the app requires login): give new tables `create policy app_user_all on public.<t> for all to authenticated using (private.is_app_user()) with check (private.is_app_user())`
 
 \- supabase-js returns `{error}` instead of throwing: check `error` on every write and throw it so the offline queue (`addPending` / `addPendingSet`) catches it
 

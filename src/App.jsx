@@ -607,7 +607,7 @@ function Login(){
   const[mode,setMode]=useState("signin");
   async function run(fn){setBusy(true);setMsg(null);try{cache.set("last_email",email.trim());await fn();}catch(e){setMsg({err:true,t:e?.message||"Something went wrong"});}finally{setBusy(false);}}
   const signIn=()=>run(async()=>{const{error}=await supabase.auth.signInWithPassword({email:email.trim(),password:pw});if(error)throw error;});
-  const signUp=()=>run(async()=>{const{data,error}=await supabase.auth.signUp({email:email.trim(),password:pw,options:{emailRedirectTo:window.location.origin}});if(error)throw error;if(!data.session)setMsg({t:"Check your email and tap the confirmation link, then come back here and sign in."});});
+  const signUp=()=>run(async()=>{const{data,error}=await supabase.auth.signUp({email:email.trim(),password:pw,options:{emailRedirectTo:window.location.origin}});if(error)throw error;if(!data.session)setMsg({t:"Check your email and tap the confirmation link. If it opens a \"not found\" page, that is fine: the account is confirmed. Come back here and sign in."});});
   const link=()=>run(async()=>{const{error}=await supabase.auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin,shouldCreateUser:false}});if(error)throw error;setMsg({t:"Sign-in link sent. Open it on this device."});});
   const reset=()=>run(async()=>{const{error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:window.location.origin});if(error)throw error;setMsg({t:"Password reset email sent."});});
   const can=email.includes("@")&&(mode==="link"||pw.length>=6);
