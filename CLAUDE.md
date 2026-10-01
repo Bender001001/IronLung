@@ -16,7 +16,7 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- React (single-file architecture — everything lives in src/App.jsx)
 
-\- Supabase (database only, no auth yet; anon key + permissive RLS policies; project ID: qijapjafswogmjxxsbhw)
+\- Supabase (database + email/password auth, project ID: qijapjafswogmjxxsbhw). `Root` in App.jsx gates the app on a session. RLS policy `app_user_all` lets `authenticated` users in `private.app_users` (allowlist by email, checked by `private.is_app_user()`) read/write every table. Add a person: `insert into private.app_users(email) values ('...')`. The `/api` functions require the user's Supabase token (`requireAppUser`).
 
 \- Vercel (auto-deploys from GitHub on push to main)
 
@@ -87,6 +87,12 @@ Ashslay also uses it for calisthenics skill tracking.
 \- PostgREST returns max 1,000 rows per request: use `fetchAll()` for anything that reads full history
 
 \- three.js / @react-three/fiber are dynamically imported inside `make3D()`; do not add static imports of them
+
+\- Weekly volume counts fractionally via `muscleCredits()`: 1.0 for `primary_muscle`, 0.5 for each `exercises.secondary_muscles` entry, and Upper Chest also counts toward Chest
+
+\- Stall detection (`exposuresFromSets` / `stallCheck`): best e1RM of the last 3 non-deload sessions vs the best before them; a 3+ week gap marks it "rebuilding" instead
+
+\- Bodyweight: one `measurements` row per day for weigh-ins; trend = 10%/day EWMA, rate = 21-day regression (`weightTrend`); maintenance estimate = avg fully-logged intake minus slope x 3,500 (`estimateMaintenance`)
 
 \- Multiline SQL via type action strips newlines — use clipboard or REST API
 

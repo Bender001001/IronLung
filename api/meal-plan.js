@@ -1,7 +1,30 @@
 let cachedModel = null;
 
+// Only signed-in, allowlisted IronLog users may call this function (it spends the Gemini quota).
+// The user's Supabase token is checked against the auth API, then against RLS: an allowlisted
+// user can read at least one row of public.programs, anyone else gets zero rows.
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://qijapjafswogmjxxsbhw.supabase.co";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpamFwamFmc3dvZ21qeHhzYmh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2ODUwNjcsImV4cCI6MjA4ODI2MTA2N30.lEc9Xw3YcIIxQvN2tfSf15u4e7B-iShK9vp4iW36qRc";
+async function requireAppUser(req, res) {
+  const h = req.headers.authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
+  if (!token) { res.status(401).json({ error: "Sign in required" }); return false; }
+  try {
+    const hdr = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` };
+    const u = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: hdr });
+    if (!u.ok) { res.status(401).json({ error: "Session expired. Sign in again." }); return false; }
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/programs?select=id&limit=1`, { headers: hdr });
+    const rows = r.ok ? await r.json() : [];
+    if (!Array.isArray(rows) || !rows.length) { res.status(403).json({ error: "Not allowed" }); return false; }
+    return true;
+  } catch {
+    res.status(503).json({ error: "Could not verify sign-in" }); return false;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!(await requireAppUser(req, res))) return;
   const { foods, targets, preferences } = req.body;
   if (!foods || !targets) return res.status(400).json({ error: "Missing foods or targets" });
 
@@ -11,6 +34,7 @@ export default async function handler(req, res) {
   const sanitize = (str) => String(str || "").replace(/[^\x20-\x7E]/g, "").replace(/"/g, "'").trim();
 
   async function findModel() {
+    if (process.env.GEMINI_MODEL) return process.env.GEMINI_MODEL;
     if (cachedModel) return cachedModel;
     const candidates = ["gemini-2.5-flash","gemini-2.0-flash","gemini-2.0-flash-001","gemini-1.5-flash-latest","gemini-1.5-flash"];
     try {
