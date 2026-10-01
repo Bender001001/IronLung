@@ -134,6 +134,34 @@ const VOL_ROLLUP={"Upper Chest":["Chest"]};
 function muscleCredits(e){if(!e?.primary_muscle)return[];const out=[{m:e.primary_muscle,w:1}];(VOL_ROLLUP[e.primary_muscle]||[]).forEach(m=>out.push({m,w:1}));(e.secondary_muscles||[]).forEach(m=>{if(!out.some(o=>o.m===m))out.push({m,w:0.5});});return out;}
 function fmtSets(x){const r=Math.round(x*2)/2;return Number.isInteger(r)?String(r):r.toFixed(1);}
 
+// "Last time" numbers per exercise from recent sets (newest first). Shared by the live
+// session loader and the offline fallback.
+function buildLast(exercises,data,{week,dayId,isDeload}){
+  const isCurrent=w=>w.workout_sessions?.week_number===week&&w.workout_sessions?.training_day_id===dayId;
+  const bySess={};data.forEach(w=>{if(isCurrent(w))return;if(!bySess[w.exercise_id])bySess[w.exercise_id]=w.session_id;});
+  const prog={};
+  exercises.forEach(ex=>{
+    const sessId=bySess[ex.id];if(!sessId)return;
+    const v=data.filter(w=>w.exercise_id===ex.id&&w.session_id===sessId).sort((a,b)=>a.set_number-b.set_number);if(!v.length)return;
+    const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));
+    const rirAdj=progressionFromRIR(v);
+    const sets=v.map(x=>({w:x.weight_lb,r:x.reps}));const when=v[0].workout_sessions?.session_date||null;
+    const stall=stallCheck(exposuresFromSets(data.filter(w=>w.exercise_id===ex.id&&!isCurrent(w))));
+    if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when,stall};
+    else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when,stall};}
+  });
+  return prog;
+}
+// Saved on every online launch so any training day can show last-time numbers offline,
+// even one you haven't opened yet this week.
+async function warmLastSets(days){
+  try{
+    const ids=[...new Set(days.flatMap(d=>d.exercises.map(e=>e.id)))];if(!ids.length)return;
+    const{data,error}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",ids).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(1000);
+    if(!error&&data)cache.set("last_sets",data);
+  }catch{}
+}
+
 // ── Stall detection ──────────────────────────────────────────────────────────
 // Per exercise, each logged session is one "exposure" scored by its best estimated
 // 1RM (Epley). Stalled = the best of the last 3 exposures is no better than the best
@@ -732,7 +760,7 @@ function App({userEmail}){
       if(dE)throw dE;
       if(d){
         const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>toEx(t.exercises,t.default_sets))}));
-        setDays(f);cache.set(`days_${activeProgram}`,f);
+        setDays(f);cache.set(`days_${activeProgram}`,f);warmLastSets(f);
       }
       const{data:fd}=await supabase.from("foods").select("*").order("name");if(fd){setFoods(fd);cache.set("foods",fd);}
       const{data:tg}=await supabase.from("macro_targets").select("*").eq("is_active",true).limit(1);if(tg?.[0]){const goalName=tg[0].goal_name;const t={protein:tg[0].protein_g_target,carbs:tg[0].carbs_g_target,fat:tg[0].fat_g_target,calories:tg[0].calories_target,goalName,bw:tg[0].bodyweight_lb,restCarbs:tg[0].rest_carbs_g||Math.max(0,tg[0].carbs_g_target-100),restCalories:tg[0].rest_calories||Math.max(1500,tg[0].calories_target-400)};setMt(t);cache.set("mt",t);}else if(Array.isArray(tg)){setMt(p=>({...p,goalName:undefined,noTargets:true}));}
@@ -1404,25 +1432,18 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   // excluding this session). Laterals now appear on 4 days, so the freshest number to beat
   // is whichever day you did them last. Keeps per-set detail for the logbook targets.
   async function loadLast(){
+    const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
+    const apply=rows=>{const prog=buildLast(day.exercises,rows,{week,dayId:day.id,isDeload});setLw(prog);return prog;};
     try{
-      const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
-      const{data}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(800);
+      const{data,error}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(800);if(error)throw error;
       if(!data)return;
-      const isCurrent=w=>w.workout_sessions?.week_number===week&&w.workout_sessions?.training_day_id===day.id;
-      const bySess={};data.forEach(w=>{if(isCurrent(w))return;if(!bySess[w.exercise_id])bySess[w.exercise_id]=w.session_id;});
-      const prog={};
-      day.exercises.forEach(ex=>{
-        const sessId=bySess[ex.id];if(!sessId)return;
-        const v=data.filter(w=>w.exercise_id===ex.id&&w.session_id===sessId).sort((a,b)=>a.set_number-b.set_number);if(!v.length)return;
-        const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));
-        const rirAdj=progressionFromRIR(v);
-        const sets=v.map(x=>({w:x.weight_lb,r:x.reps}));const when=v[0].workout_sessions?.session_date||null;
-        const stall=stallCheck(exposuresFromSets(data.filter(w=>w.exercise_id===ex.id&&!isCurrent(w))));
-        if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when,stall};
-        else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when,stall};}
-      });
-      setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);
-    }catch{const c=cache.get(`lw_${day.id}_${week}`);if(c)setLw(c);}
+      cache.set(`lw_${day.id}_${week}`,apply(data));
+    }catch{
+      // Offline: this day's cached numbers, else rebuild from the recent-sets snapshot
+      // the app saves on every online launch (warmLastSets).
+      const c=cache.get(`lw_${day.id}_${week}`);if(c){setLw(c);return;}
+      const rows=cache.get("last_sets");if(rows)apply(rows.filter(r=>exerciseIds.includes(r.exercise_id)));
+    }
   }
 
   async function loadHistory(exerciseId){
@@ -1688,8 +1709,8 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   function planTotal(){if(!plan)return{protein:0,carbs:0,fat:0,calories:0};const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];return all.reduce((a,m)=>({protein:a.protein+(m.protein_g||0)*(m.portions||1),carbs:a.carbs+(m.carbs_g||0)*(m.portions||1),fat:a.fat+(m.fat_g||0)*(m.portions||1),calories:a.calories+(m.calories||0)*(m.portions||1)}),{protein:0,carbs:0,fat:0,calories:0});}
   async function logPlanToday(){if(!plan)return;const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){if(!f.id)continue;const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions||1,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions||1});if(error)throw error;}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions||1});onPC();}}setShowPlan(false);setPlan(null);}
   useEffect(()=>{loadLog();loadRecent();},[]);
-  async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
-  async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
+  async function loadLog(){try{const{data,error}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(error)throw error;if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
+  async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data,error}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(error)throw error;if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
   async function add(f,portions=1){const entry={id:`t_${Date.now()}`,food:f.name,portions,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{data:ins,error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions}).select().single();if(error)throw error;if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions});onPC();}setShowS(false);setShowRecent(false);setSearch("");}
   async function rm(i){const e=log[i];setLog(p=>{const n=p.filter((_,x)=>x!==i);cache.set(`meals_${td}`,n);return n;});if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").delete().eq("id",e.id);if(error)throw error;}catch{addPending({type:"delete_meal",id:e.id});onPC();}}}
   async function up(i,pt){const np=Math.max(0.25,pt);setLog(p=>{const n=p.map((m,x)=>x===i?{...m,portions:np}:m);cache.set(`meals_${td}`,n);return n;});const e=log[i];if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").update({portions:np}).eq("id",e.id);if(error)throw error;}catch{addPending({type:"update_portions",id:e.id,portions:np});onPC();}}}
