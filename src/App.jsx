@@ -665,7 +665,7 @@ function net(p,ms=6000){if(navigator.onLine===false)return Promise.reject(new Er
 function storedSession(){try{const raw=localStorage.getItem("sb-qijapjafswogmjxxsbhw-auth-token");if(!raw)return null;const v=JSON.parse(raw);return v?.user?v:null;}catch{return null;}}
 
 async function authHeaders(){try{const{data}=await supabase.auth.getSession();const t=data?.session?.access_token;return t?{Authorization:`Bearer ${t}`}:{};}catch{return{};}}
-async function signOut(){try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));try{navigator.serviceWorker?.controller?.postMessage("clear-caches");if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch{}}
+async function signOut(){if(getPending().length){try{await flushPending();}catch{}const left=getPending().length;if(left&&!window.confirm(`${left} change${left>1?"s":""} logged offline haven't synced yet and will be lost if you sign out. Sign out anyway?`))return;}try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));try{navigator.serviceWorker?.controller?.postMessage("clear-caches");if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch{}}
 
 function Splash({msg}){return(<div style={{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:sans}}><div style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:C.tx,letterSpacing:"0.05em"}}>IRON<span style={{color:C.ac}}>LOG</span></div><div style={{fontSize:11,color:C.mt,marginTop:8}}>{msg||"Loading..."}</div></div></div>);}
 
