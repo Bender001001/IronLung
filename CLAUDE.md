@@ -16,7 +16,7 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- React (single-file architecture — everything lives in src/App.jsx)
 
-\- Supabase (database + auth, project ID: qijapjafswogmjxxsbhw)
+\- Supabase (database only, no auth yet; anon key + permissive RLS policies; project ID: qijapjafswogmjxxsbhw)
 
 \- Vercel (auto-deploys from GitHub on push to main)
 
@@ -60,7 +60,11 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Hit top of rep range across all sets → weight increases next session
 
-\- Active program: APEX (program\_id=2), structured as Upper A/B, Lower A/B, Arms \& Delts
+\- Active program: APEX v2 (program\_id=2, since 2026-09-30): Lower A (Mon, stays first), Upper A, Lower B, Upper B are the core 4 days; Arms \& Delts is an optional Saturday pump day (its focus starts with "Optional", which excludes it from weekly completion %). Pre-v2 layout is backed up in the `backup` schema.
+
+\- Week number is derived on load: last logged session's week, +1 once you train in a new Mon-Sun calendar week (`syncWeek`)
+
+\- "Last time" / logbook targets come from the most recent session containing each exercise, any day (`loadLast`)
 
 \- Nutrition tracking with Gemini-powered food parsing and AI meal plans
 
@@ -74,7 +78,15 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Progression triggers require ALL sets to hit repMax, not average
 
-\- Supabase new tables have RLS enabled by default — must disable for anon key
+\- Supabase new tables have RLS enabled by default — add an `anon` policy (see existing `anon_read` / `anon_all`) rather than disabling RLS
+
+\- supabase-js returns `{error}` instead of throwing: check `error` on every write and throw it so the offline queue (`addPending` / `addPendingSet`) catches it
+
+\- Writes to `workout_sets` use upsert with `onConflict: "session_id,exercise_id,set_number"`
+
+\- PostgREST returns max 1,000 rows per request: use `fetchAll()` for anything that reads full history
+
+\- three.js / @react-three/fiber are dynamically imported inside `make3D()`; do not add static imports of them
 
 \- Multiline SQL via type action strips newlines — use clipboard or REST API
 
