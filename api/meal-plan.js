@@ -88,7 +88,7 @@ export default async function handler(req, res) {
     required: ["breakfast", "lunch", "dinner", "snacks"]
   };
 
-  const prompt = `You are a precision meal planning AI for a bodybuilder on a cut.
+  const prompt = `You are a precision meal planning AI for a bodybuilder. Current phase: ${sanitize(targets.goal || "Maintain")}.
 
 MACRO TARGETS:
 - Calories: ${targets.calories}kcal (target — code will auto-adjust after)

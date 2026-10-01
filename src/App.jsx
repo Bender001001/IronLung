@@ -1,24 +1,32 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import * as THREE from "three";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { supabase } from "./supabase.js";
+// three.js + @react-three/fiber are loaded on demand (see Muscle3DView below) so they
+// stay out of the main bundle; the 3D view is one toggle inside an exercise card.
 
 const cache={get(k){try{const v=localStorage.getItem(`il_${k}`);return v?JSON.parse(v):null;}catch{return null;}},set(k,v){try{localStorage.setItem(`il_${k}`,JSON.stringify(v));}catch{}}};
 function getPending(){return cache.get("pending")||[];}
 function localDate(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function isOptionalDay(d){return/^optional/i.test(d?.focus||"");}
+function mondayKey(ds){const[y,m,d]=String(ds).slice(0,10).split("-").map(Number);const dt=new Date(y,m-1,d);const back=(dt.getDay()+6)%7;dt.setDate(dt.getDate()-back);return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;}
 function daysSinceLastMeasurement(meas){if(!meas?.length)return Infinity;const last=meas.reduce((a,b)=>a.measure_date>b.measure_date?a:b);return Math.floor((Date.now()-new Date(last.measure_date).getTime())/86400000);}
+function addPendingSet(op){const q=getPending().filter(o=>!(o.type==="upsert_set"&&o.sessionId===op.sessionId&&o.exerciseId===op.exerciseId&&o.setNumber===op.setNumber));q.push({...op,ts:Date.now()});cache.set("pending",q);}
 function addPending(op){const q=getPending();q.push({...op,ts:Date.now()});cache.set("pending",q);}
-async function flushPending(){if(flushing)return 0;flushing=true;const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];for(const op of q){try{if(op.type==="upsert_set"){if(op.dbId)await supabase.from("workout_sets").update({weight_lb:op.weight,reps:op.reps}).eq("id",op.dbId);else await supabase.from("workout_sets").insert({session_id:op.sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,weight_lb:op.weight,reps:op.reps});ok++;}else if(op.type==="insert_meal"){await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions});ok++;}else if(op.type==="delete_meal"){await supabase.from("meal_log").delete().eq("id",op.id);ok++;}else if(op.type==="update_portions"){await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id);ok++;}else if(op.type==="insert_measurement"){await supabase.from("measurements").insert(op.data);ok++;}else if(op.type==="create_session"){await supabase.from("workout_sessions").insert(op.data);ok++;}else if(op.type==="insert_food"){await supabase.from("foods").insert(op.data);ok++;}}catch{fail.push(op);}}cache.set("pending",fail);flushing=false;return ok;}
+// Offline queue. Each op throws on a Supabase error so a failed op stays queued.
+// create_session ops carry the temp id the UI used; later set ops that point at that
+// temp id are re-pointed at the real session id once it exists.
+async function flushPending(){if(flushing)return 0;flushing=true;try{const q=getPending();if(!q.length)return 0;let ok=0;const fail=[];const idMap=cache.get("pending_idmap")||{};const chk=r=>{if(r?.error)throw r.error;return r;};for(const op of q){try{if(op.type==="upsert_set"){const sessionId=idMap[op.sessionId]||op.sessionId;if(String(sessionId).startsWith("temp_")){fail.push(op);continue;}const payload={weight_lb:op.weight,reps:op.reps};if(op.rir!=null)payload.rir=op.rir;if(op.mmc!=null)payload.mmc=op.mmc;if(op.dbId)chk(await supabase.from("workout_sets").update(payload).eq("id",op.dbId));else chk(await supabase.from("workout_sets").upsert({session_id:sessionId,exercise_id:op.exerciseId,set_number:op.setNumber,...payload},{onConflict:"session_id,exercise_id,set_number"}));ok++;}else if(op.type==="insert_meal"){chk(await supabase.from("meal_log").insert({log_date:op.date,food_id:op.foodId,portions:op.portions}));ok++;}else if(op.type==="delete_meal"){chk(await supabase.from("meal_log").delete().eq("id",op.id));ok++;}else if(op.type==="update_portions"){chk(await supabase.from("meal_log").update({portions:op.portions}).eq("id",op.id));ok++;}else if(op.type==="insert_measurement"){chk(await supabase.from("measurements").insert(op.data));ok++;}else if(op.type==="create_session"){const{data}=chk(await supabase.from("workout_sessions").insert(op.data).select().single());if(op.tempId&&data)idMap[op.tempId]=data.id;ok++;}else if(op.type==="insert_food"){chk(await supabase.from("foods").insert(op.data));ok++;}}catch{fail.push(op);}}cache.set("pending",fail);cache.set("pending_idmap",fail.length?idMap:{});return ok;}finally{flushing=false;}}
 
 let flushing=false;
+
+// DB exercise row -> the shape Session renders. Shared by the day loader and Swap.
+function toEx(e,sets){return{id:e.id,name:e.name,sets,repMin:e.rep_min,repMax:e.rep_max,increment:parseFloat(e.increment_lb)||2.5,category:e.category,cues:e.cues,muscle:e.primary_muscle,video:e.video_url,imageUrl:e.image_url,tempo:e.tempo_eccentric_sec||null,isCompound:!!e.is_compound,isCardio:!!e.is_cardio};}
 
 async function getSwapCandidates(exerciseId){
   const{data:src}=await supabase.from("exercises").select("primary_muscle,region_tag,length_bias").eq("id",exerciseId).single();
   if(!src)return[];
-  const{data:pool}=await supabase.from("exercises").select("id,name,primary_muscle,region_tag,length_bias,is_compound,priority_level").eq("primary_muscle",src.primary_muscle).neq("id",exerciseId);
+  const{data:pool}=await supabase.from("exercises").select("id,name,primary_muscle,region_tag,length_bias,is_compound,priority_level,rep_min,rep_max,increment_lb,cues,video_url,image_url,tempo_eccentric_sec,is_cardio").eq("primary_muscle",src.primary_muscle).neq("id",exerciseId);
   if(!pool)return[];
-  return pool.map(c=>{
+  return pool.filter(c=>!c.is_cardio).map(c=>{
     let score=0,tier="OK";
     if(c.region_tag&&c.region_tag===src.region_tag){score=3;tier="EXACT";}
     else if(c.length_bias&&c.length_bias===src.length_bias){score=2;tier="CLOSE";}
@@ -76,6 +84,9 @@ async function loadVolTargets(){
   }catch{}
 }
 loadVolTargets();
+
+// Supabase returns at most 1,000 rows per request; page through when a view needs all history.
+async function fetchAll(build,page=1000){let out=[];for(let from=0;;from+=page){const{data,error}=await build().range(from,from+page-1);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<page)break;}return out;}
 
 function epley1RM(weight,reps){if(!weight||!reps)return 0;return weight*(1+reps/30);}
 function deloadAdjust(weight,weekType){if(weekType!=="Deload"||!weight)return weight;return Math.round((weight*0.6)/2.5)*2.5;}
@@ -522,15 +533,31 @@ export default function App(){
   const[selDay,setSelDay]=useState(null);
   const[week,setWeek]=useState(()=>cache.get("week")||12);
   const[loading,setLoading]=useState(true);
-  const[restDur,setRestDur]=useState(120);
+  const[restDur,setRestDurRaw]=useState(()=>cache.get("restDur")??0);
+  function setRestDur(v){setRestDurRaw(v);cache.set("restDur",v);}
   const[weekType,setWeekType]=useState(()=>cache.get("weekType")||"Accumulation");
   const[pc,setPc]=useState(0);
   const[activeProgram,setActiveProgram]=useState(()=>cache.get("activeProgram")||1);
   const[measNudgeDismissed,setMeasNudgeDismissed]=useState(()=>{const v=cache.get("dismissed_measurement_nudge");if(!v)return false;return(Date.now()-new Date(v).getTime())<7*86400000;});
   const online=useOnline();
 
-  useEffect(()=>{load();},[activeProgram]);
+  useEffect(()=>{load();syncWeek();},[activeProgram]);
   useEffect(()=>{if(online)flushPending().then(n=>{if(n>0){setPc(getPending().length);load();}});},[online]);
+  // Fresh device / cleared cache: start on whichever program is marked active in Supabase.
+  useEffect(()=>{if(cache.get("activeProgram")!=null)return;(async()=>{try{const{data}=await supabase.from("programs").select("id").eq("is_active",true).limit(1);const pid=data?.[0]?.id;if(pid&&pid!==activeProgram){setActiveProgram(pid);cache.set("activeProgram",pid);}}catch{}})();},[]);
+
+  // Week number follows training weeks: it stays on the week of your last logged session
+  // until you train in a new calendar week (Mon-Sun), then moves up by one. Gaps don't
+  // inflate it, and a finished week can't be reopened by accident. Arrows still override.
+  async function syncWeek(){
+    try{
+      const{data}=await supabase.from("workout_sessions").select("week_number,session_date,workout_sets(count)").eq("program_id",activeProgram).order("session_date",{ascending:false}).order("id",{ascending:false}).limit(15);
+      const last=(data||[]).find(s=>(s.workout_sets?.[0]?.count||0)>0);
+      if(!last)return;
+      const wk=mondayKey(localDate())>mondayKey(last.session_date)?last.week_number+1:last.week_number;
+      setWeek(wk);cache.set("week",wk);
+    }catch{}
+  }
 
   async function load(){
     setLoading(true);
@@ -538,7 +565,7 @@ export default function App(){
       const{data:d,error:dE}=await supabase.from("training_days").select("*,training_day_exercises(*,exercises(*))").eq("program_id",activeProgram).order("day_order");
       if(dE)throw dE;
       if(d){
-        const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>({id:t.exercises.id,name:t.exercises.name,sets:t.default_sets,repMin:t.exercises.rep_min,repMax:t.exercises.rep_max,increment:parseFloat(t.exercises.increment_lb)||2.5,category:t.exercises.category,cues:t.exercises.cues,muscle:t.exercises.primary_muscle,video:t.exercises.video_url,imageUrl:t.exercises.image_url,tempo:t.exercises.tempo_eccentric_sec||null}))}));
+        const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>toEx(t.exercises,t.default_sets))}));
         setDays(f);cache.set(`days_${activeProgram}`,f);
       }
       const{data:fd}=await supabase.from("foods").select("*").order("name");if(fd){setFoods(fd);cache.set("foods",fd);}
@@ -681,6 +708,9 @@ function categoryForName(name){
   return null;
 }
 
+// The 3D components are built inside make3D() so three.js and @react-three/fiber can be
+// fetched with a dynamic import() the first time the 3D view is opened (still one source file).
+function make3D({Canvas,useFrame,useThree,GLTFLoader,THREE}){
 let gltfPromise=null;
 function loadAnatomy(){
   if(!gltfPromise){
@@ -842,6 +872,9 @@ function Muscle3DView({muscle,color}){
     </div>
   );
 }
+return Muscle3DView;
+}
+const Muscle3DView=lazy(()=>Promise.all([import("@react-three/fiber"),import("three/examples/jsm/loaders/GLTFLoader.js"),import("three")]).then(([r3f,gltf,THREE])=>({default:make3D({Canvas:r3f.Canvas,useFrame:r3f.useFrame,useThree:r3f.useThree,GLTFLoader:gltf.GLTFLoader,THREE})})));
 
 // Photo (curated per-exercise image) and 3D (real anatomical mesh) are the
 // two real options now. The old "Flat" body-highlighter silhouette is gone —
@@ -867,7 +900,7 @@ function MuscleDiagram({muscle,color,imageUrl}){
           <img src={imageUrl} alt={muscle} style={{width:"100%",display:"block",borderRadius:8}} onError={e=>{e.target.style.display="none";}}/>
         </div>
       )}
-      {mode==="3d"&&<Muscle3DView muscle={muscle} color={col}/>}
+      {mode==="3d"&&<Suspense fallback={<div style={{width:"100%",maxWidth:280,aspectRatio:"160/190",background:C.sf2,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:C.tx2,fontFamily:mono}}>Loading 3D…</div>}><Muscle3DView muscle={muscle} color={col}/></Suspense>}
       <div style={{display:"flex",gap:4}}>
         {imageUrl&&<button onClick={()=>setMode("image")} style={chip(mode==="image")}>Photo</button>}
         <button onClick={()=>setMode("3d")} style={chip(mode==="3d")}>3D</button>
@@ -901,7 +934,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
     const lat=meas&&meas.length>0?meas[meas.length-1]:null;
     const entry={measure_date:localDate(),bodyweight_lb:parseFloat(bwInput)||null};
     if(lat?.height_in)entry.height_in=lat.height_in;
-    try{const{data}=await supabase.from("measurements").insert(entry).select().single();if(data)onAddMeas(data);}
+    try{const{data,error}=await supabase.from("measurements").insert(entry).select().single();if(error)throw error;if(data)onAddMeas(data);}
     catch{onAddMeas({...entry,id:`t_${Date.now()}`});addPending({type:"insert_measurement",data:entry});}
     setShowBWInput(false);setBwInput("");
   }
@@ -911,10 +944,10 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
     try{
       const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(reps)").eq("week_number",week).eq("program_id",activeProgram);
       if(!data?.length){setWc(null);setCompletedDays({});return;}
-      const tp=days.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);
+      const core=days.filter(d=>!isOptionalDay(d));const coreIds=new Set(core.map(d=>d.id));const tp=core.reduce((s,d)=>s+d.exercises.reduce((s2,e)=>s2+e.sets,0),0);
       let dn=0;const cd={};
-      data.forEach(s=>{let sets=0;s.workout_sets.forEach(ws=>{if(ws.reps>0){dn++;sets++;}});if(sets>0)cd[s.training_day_id]=true;});
-      setCompletedDays(cd);setWc(tp>0?Math.round((dn/tp)*100):0);
+      data.forEach(s=>{let sets=0;s.workout_sets.forEach(ws=>{if(ws.reps>0){if(coreIds.has(s.training_day_id))dn++;sets++;}});if(sets>0)cd[s.training_day_id]=true;});
+      setCompletedDays(cd);setWc(tp>0?Math.min(100,Math.round((dn/tp)*100)):0);
     }catch{setWc(null);}
   }
 
@@ -999,7 +1032,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
         return(
           <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span style={{...lbl,color:C.ac}}>Cut progress</span>
+              <span style={{...lbl,color:C.ac}}>Goal progress</span>
               <button onClick={()=>{setGoalBWInput(String(goalBW));setGoalBFInput(String(goalBF));setShowGoalEdit(!showGoalEdit);}} style={{background:"none",border:"none",color:C.mt,fontSize:10,cursor:"pointer",padding:0}}>{showGoalEdit?"done":"edit goal"}</button>
             </div>
             {showGoalEdit?(
@@ -1009,14 +1042,14 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {gBW&&curBW&&<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:11,color:C.tx}}>{curBW} lb <span style={{color:C.mt}}>→ {gBW} lb</span></span><span style={{fontSize:11,fontFamily:mono,color:bwPct===100?C.gn:C.ac}}>{bwPct}%</span></div><div style={{height:5,background:C.bd,borderRadius:3,overflow:"hidden"}}><div style={{width:`${bwPct||0}%`,height:"100%",background:bwPct===100?C.gn:C.ac,borderRadius:3,transition:"width 0.4s"}}/></div><div style={{fontSize:9,color:C.mt,marginTop:2}}>{curBW>gBW?`${(curBW-gBW).toFixed(1)} lb to go`:"Goal reached 🎯"}</div></div>}
+                {gBW&&curBW&&<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:11,color:C.tx}}>{curBW} lb <span style={{color:C.mt}}>→ {gBW} lb</span></span><span style={{fontSize:11,fontFamily:mono,color:bwPct===100?C.gn:C.ac}}>{bwPct}%</span></div><div style={{height:5,background:C.bd,borderRadius:3,overflow:"hidden"}}><div style={{width:`${bwPct||0}%`,height:"100%",background:bwPct===100?C.gn:C.ac,borderRadius:3,transition:"width 0.4s"}}/></div><div style={{fontSize:9,color:C.mt,marginTop:2}}>{bwPct===100?"Goal reached 🎯":`${Math.abs(gBW-curBW).toFixed(1)} lb to go`}</div></div>}
                 {gBF&&curBF&&<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:11,color:C.tx}}>{parseFloat(curBF).toFixed(1)}% BF <span style={{color:C.mt}}>→ {gBF}%</span></span><span style={{fontSize:11,fontFamily:mono,color:bfPct===100?C.gn:C.am}}>{bfPct}%</span></div><div style={{height:5,background:C.bd,borderRadius:3,overflow:"hidden"}}><div style={{width:`${bfPct||0}%`,height:"100%",background:bfPct===100?C.gn:C.am,borderRadius:3,transition:"width 0.4s"}}/></div><div style={{fontSize:9,color:C.mt,marginTop:2}}>{parseFloat(curBF)>gBF?`${(parseFloat(curBF)-gBF).toFixed(1)}% to go`:"Goal reached 🎯"}</div></div>}
               </div>
             )}
           </div>
         );
       })()):(
-        <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:12,fontSize:11,color:C.mt}}>+ Set cut goal (weight / BF%)</button>
+        <button onClick={()=>setShowGoalEdit(true)} style={{...btnGhost,width:"100%",textAlign:"center",marginBottom:12,fontSize:11,color:C.mt}}>+ Set a bodyweight / BF% goal</button>
       )}
       {showGoalEdit&&!goalBW&&!goalBF&&(
         <div style={{background:C.sf,border:`1px solid ${C.bd}`,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -1068,9 +1101,9 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
             {isDL&&<div style={{fontSize:11,color:C.am,marginTop:8,padding:"6px 10px",background:`${C.am}08`,borderRadius:6}}>Deload: 2 sets at ~60% weight</div>}
           </div>
           <div>
-            <div style={{...lbl,marginBottom:10}}>Rest timer</div>
+            <div style={{...lbl,marginBottom:10}}>Rest timer <span style={{textTransform:"none",letterSpacing:0,fontWeight:400,color:C.mt}}>· Auto = 3:00 compounds, 1:30 isolation</span></div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {[60,90,120,150,180,240].map(t=><button key={t} onClick={()=>setRestDur(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${restDur===t?C.ac:C.bd}`,background:restDur===t?`${C.ac}15`:"transparent",color:restDur===t?C.ac:C.mt,fontSize:12,fontFamily:mono,cursor:"pointer"}}>{Math.floor(t/60)}:{String(t%60).padStart(2,"0")}</button>)}
+              {[0,60,90,120,150,180,240].map(t=><button key={t} onClick={()=>setRestDur(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${restDur===t?C.ac:C.bd}`,background:restDur===t?`${C.ac}15`:"transparent",color:restDur===t?C.ac:C.mt,fontSize:12,fontFamily:mono,cursor:"pointer"}}>{t===0?"Auto":`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`}</button>)}
             </div>
           </div>
         </div>
@@ -1112,7 +1145,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   const[rdForm,setRdForm]=useState({sleep_hours:null,energy:null,soreness_priority:null});
   const[swapEx,setSwapEx]=useState(null);
   const[swapCandidates,setSwapCandidates]=useState([]);
-  const[swapMap,setSwapMap]=useState({});
+  const swapKey=`swaps_${day.id}_${week}_${activeProgram}`;
+  const[swapMap,setSwapMapRaw]=useState(()=>cache.get(swapKey)||{});
+  function setSwapMap(fn){setSwapMapRaw(p=>{const n=typeof fn==="function"?fn(p):fn;cache.set(swapKey,n);return n;});}
   const[prState,setPrState]=useState(null);
   const prDismissRef=useRef(null);
   const saveTimer=useRef({});
@@ -1120,6 +1155,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   sdRef.current=sd;
 
   function eff(ex){return deloadSets(ex.sets,weekType);}
+  // Keep the phone screen on while a session is open (re-acquired when the tab comes back).
+  useEffect(()=>{let lock=null;const req=async()=>{try{lock=await navigator.wakeLock?.request("screen");}catch{}};req();const vis=()=>{if(document.visibilityState==="visible")req();};document.addEventListener("visibilitychange",vis);return()=>{document.removeEventListener("visibilitychange",vis);try{lock?.release();}catch{}};},[]);
   useEffect(()=>{init();loadLast();},[day.id,week]);
   useEffect(()=>{
     if(!sid||String(sid).startsWith("temp_")||checkedReadiness)return;
@@ -1130,21 +1167,27 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     })();
   },[sid,checkedReadiness]);
 
+  // "Last time" = the most recent logged session that contains each exercise (any day,
+  // excluding this session). Laterals now appear on 4 days, so the freshest number to beat
+  // is whichever day you did them last. Keeps per-set detail for the logbook targets.
   async function loadLast(){
-    const p=week-1;
     try{
-      if(p>=1){
-        const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps,rir)").eq("week_number",p).eq("training_day_id",day.id).limit(1);
-        if(data?.[0]){
-          const byE={};data[0].workout_sets.forEach(w=>{if(!byE[w.exercise_id])byE[w.exercise_id]=[];byE[w.exercise_id].push(w);});
-          const prog={};
-          Object.entries(byE).forEach(([eid,sets])=>{const v=sets.filter(s=>s.reps>0&&s.weight_lb>0);if(!v.length)return;const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));const ex=day.exercises.find(e=>e.id===parseInt(eid));const rirAdj=progressionFromRIR(v);if(isDeload)prog[eid]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj};else{const hit=ex&&v.every(s=>s.reps>=ex.repMax);prog[eid]={w:mw,r:avg,up:hit,sw:hit&&ex?mw+ex.increment:mw,rirAdj};}});
-          setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);return;
-        }
-      }
       const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
-      const{data:fallback}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,created_at").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false});
-      if(fallback){const byE={};fallback.forEach(ws=>{if(!byE[ws.exercise_id])byE[ws.exercise_id]=ws;});const prog={};Object.entries(byE).forEach(([eid,ws])=>{const mw=ws.weight_lb;const r=ws.reps;if(isDeload)prog[eid]={w:mw,r,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true};else prog[eid]={w:mw,r,up:false,sw:mw};});setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);}
+      const{data}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(600);
+      if(!data)return;
+      const isCurrent=w=>w.workout_sessions?.week_number===week&&w.workout_sessions?.training_day_id===day.id;
+      const bySess={};data.forEach(w=>{if(isCurrent(w))return;if(!bySess[w.exercise_id])bySess[w.exercise_id]=w.session_id;});
+      const prog={};
+      day.exercises.forEach(ex=>{
+        const sessId=bySess[ex.id];if(!sessId)return;
+        const v=data.filter(w=>w.exercise_id===ex.id&&w.session_id===sessId).sort((a,b)=>a.set_number-b.set_number);if(!v.length)return;
+        const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));
+        const rirAdj=progressionFromRIR(v);
+        const sets=v.map(x=>({w:x.weight_lb,r:x.reps}));const when=v[0].workout_sessions?.session_date||null;
+        if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when};
+        else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when};}
+      });
+      setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);
     }catch{const c=cache.get(`lw_${day.id}_${week}`);if(c)setLw(c);}
   }
 
@@ -1155,10 +1198,10 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   async function init(){
     const ck=`session_${day.id}_${week}_${activeProgram}`;
     try{
-      const{data}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);
+      const{data,error:se}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);if(se)throw se;
       if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
-      else{const{data:n}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
-    }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets);}else{const tid=`temp_${Date.now()}`;setSid(tid);addPending({type:"create_session",data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
+      else{const{data:n,error:ne}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(ne)throw ne;if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
+    }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets||{});}else{const tid=`temp_${Date.now()}`;setSid(tid);cache.set(ck,{sid:tid,sets:{}});addPending({type:"create_session",tempId:tid,data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
   }
 
   async function saveNotes(val){setNotes(val);if(!sid||String(sid).startsWith("temp_"))return;try{await supabase.from("workout_sessions").update({notes:val}).eq("id",sid);setNotesSaved(true);setTimeout(()=>setNotesSaved(false),1500);}catch{}}
@@ -1171,8 +1214,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
   }
 
-  async function sv(eid,sn,overrides={}){if(!sid||String(sid).startsWith("temp_"))return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);
-    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId)await supabase.from("workout_sets").update(payload).eq("id",d.dbId);else{const{data:ins}=await supabase.from("workout_sets").insert({session_id:sid,exercise_id:eid,set_number:sn,...payload}).select().single();if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
+  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
+    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId){const{error:ue}=await supabase.from("workout_sets").update(payload).eq("id",d.dbId);if(ue)throw ue;}else{const{data:ins,error:ie}=await supabase.from("workout_sets").upsert({session_id:sid,exercise_id:eid,set_number:sn,...payload},{onConflict:"session_id,exercise_id,set_number"}).select().single();if(ie)throw ie;if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
       if(savedRowId&&d.weight>0&&d.reps>0&&weekType!=="Deload"){
         const currE1=epley1RM(d.weight,d.reps);
         const{data:prior}=await supabase.from("workout_sets").select("weight_lb,reps,exercises(name)").eq("exercise_id",eid).neq("id",savedRowId).gt("weight_lb",0).gt("reps",0);
@@ -1185,7 +1228,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           prDismissRef.current=setTimeout(()=>setPrState(null),4000);
         }
       }
-    }catch{addPending({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps});onPC();}
+    }catch{queue();}
     setSaved(new Date().toLocaleTimeString());}
   function adj(eid,sn,field,delta){const k=`${eid}-${sn}`,curr=sdRef.current[k]?.[field]||0;const newVal=field==="reps"?Math.max(0,Math.round(curr+delta)):Math.max(0,Math.round((curr+delta)*100)/100);const updates={weight:sdRef.current[k]?.weight||0,reps:sdRef.current[k]?.reps||0,[field]:newVal};setSd(p=>({...p,[k]:{...p[k],...updates}}));sv(eid,sn,updates);}
 
@@ -1258,8 +1301,10 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
           const es=eff(ex),isE=expEx===xi,dn=done(ex.id,es),all=dn===es,pg=lw[ex.id];
           const rirAdj=pg?.rirAdj;
           const rirBump=!pg?.deload&&rirAdj?.delta===1?(ex.increment||2.5):0;
-          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw+rirBump:pg.w+rirBump):null;
-          const todayWeight=rawWeight&&readiness?.intensity_modifier?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
+          const rawWeight=pg?(pg.deload?pg.sw:pg.up?pg.sw:pg.w+rirBump):null;
+          const todayWeight=rawWeight&&ex.isCompound&&readiness?.intensity_modifier<1?Math.round(rawWeight*readiness.intensity_modifier/2.5)*2.5:rawWeight;
+          const tgtReps=i=>{if(!pg||pg.deload)return null;if(pg.up)return ex.repMin;const l=pg.sets?.[i];if(!l)return null;return l.r>=ex.repMax?ex.repMax:l.r+1;};
+          const restFor=restDur||(ex.isCompound?180:90);
           return(
             <div key={ex.id} style={{background:C.sf,borderRadius:12,border:`1px solid ${all?`${C.gn}30`:isE?C.bd2:C.bd}`,overflow:"hidden"}}>
               <button onClick={()=>{setExpEx(isE?-1:xi);setHistory(null);setShowTimer(false);}} style={{width:"100%",padding:"13px 14px",background:"none",border:"none",color:C.tx,cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
@@ -1283,7 +1328,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                   </div>
                   {swapEx===xi&&(
                     <div style={{background:C.sf2,borderRadius:10,border:`1px solid ${C.bd}`,padding:10,marginBottom:10}}>
-                      <div style={{fontSize:11,fontWeight:600,color:C.tx,marginBottom:8}}>Swap: <span style={{color:C.mt}}>{origEx.name}</span></div>
+                      <div style={{fontSize:11,fontWeight:600,color:C.tx,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span>Swap: <span style={{color:C.mt}}>{origEx.name}</span></span>{swapMap[origEx.id]&&<button onClick={()=>{setSwapMap(p=>{const n={...p};delete n[origEx.id];return n;});setSwapEx(null);}} style={{...btnGhost,padding:"3px 8px",fontSize:10}}>Use original</button>}</div>
                       {swapCandidates.length===0&&<div style={{fontSize:11,color:C.mt,textAlign:"center",padding:"10px 0"}}>No alternatives found</div>}
                       {[{tier:"EXACT",label:"Best match"},{tier:"CLOSE",label:"Similar"},{tier:"OK",label:"Same muscle"}].map(({tier,label})=>{
                         const group=swapCandidates.filter(c=>c._tier===tier);
@@ -1293,7 +1338,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                           {group.map(c=>{
                             const biasColor=c.length_bias==="lengthened"?C.gn:c.length_bias==="shortened"?C.am:null;
                             const biasLabel=c.length_bias==="lengthened"?"long":c.length_bias==="shortened"?"short":c.length_bias==="mid-range"?"mid":null;
-                            return(<button key={c.id} onClick={()=>{setSwapMap(p=>({...p,[origEx.id]:c}));setSwapEx(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:swapMap[origEx.id]?.id===c.id?`${C.ac}12`:C.sf,border:`1px solid ${swapMap[origEx.id]?.id===c.id?`${C.ac}44`:C.bd}`,borderRadius:8,marginBottom:4,cursor:"pointer",textAlign:"left"}}>
+                            return(<button key={c.id} onClick={()=>{setSwapMap(p=>({...p,[origEx.id]:toEx(c,origEx.sets)}));setSwapEx(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:swapMap[origEx.id]?.id===c.id?`${C.ac}12`:C.sf,border:`1px solid ${swapMap[origEx.id]?.id===c.id?`${C.ac}44`:C.bd}`,borderRadius:8,marginBottom:4,cursor:"pointer",textAlign:"left"}}>
                               {c.priority_level==="HIGH"&&<span style={{fontSize:8,color:C.ac,fontWeight:700,flexShrink:0}}>★</span>}
                               <span style={{fontSize:12,color:C.tx,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</span>
                               {biasLabel&&<span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:biasColor?`${biasColor}14`:C.sf2,color:biasColor||C.mt,fontFamily:mono,flexShrink:0}}>{biasLabel}</span>}
@@ -1326,11 +1371,12 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <button onClick={()=>fill(ex.id,es,todayWeight||0)} style={{padding:"7px 12px",background:pg?.up?`${C.gn}10`:pg?.deload?`${C.am}10`:C.sf2,border:`1px solid ${pg?.up?`${C.gn}33`:pg?.deload?`${C.am}33`:C.bd}`,borderRadius:8,color:pg?.up?C.gn:pg?.deload?C.am:C.mt,fontSize:12,fontWeight:600,cursor:"pointer"}}>Fill {todayWeight||0}lb</button>
                     {pg?.up&&<button onClick={()=>fill(ex.id,es,pg.w)} style={{padding:"7px 12px",background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer"}}>Keep {pg.w}lb</button>}
                   </div>
-                  {showTimer?<Timer key={timerKey} duration={restDur} onDismiss={()=>setShowTimer(false)}/>
+                  {showTimer?<Timer key={timerKey} duration={restFor} onDismiss={()=>setShowTimer(false)}/>
                   :<button onClick={startTimer} style={{width:"100%",padding:"9px",marginBottom:10,background:C.sf2,border:`1px solid ${C.bd}`,borderRadius:8,color:C.mt,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                    Start rest timer ({Math.floor(restDur/60)}:{String(restDur%60).padStart(2,"0")})
+                    Start rest timer ({Math.floor(restFor/60)}:{String(restFor%60).padStart(2,"0")})
                   </button>}
+                  {pg?.sets?.length>0&&!pg.deload&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,lineHeight:1.5}}>Last{pg.when?` (${pg.when.slice(5)})`:""}: <span style={{color:C.tx2}}>{pg.sets.map(x=>`${x.w}×${x.r}`).join(" · ")}</span><br/><span style={{color:pg.up?C.gn:C.ac}}>{pg.up?`Top of range hit. ${pg.sw}lb × ${ex.repMin}+ today`:"Beat it: +1 rep per set (grey numbers), same weight"}</span></div>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
                     return(<div key={i} style={{marginBottom:6}}>
@@ -1338,15 +1384,15 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                         <div style={{fontFamily:mono,fontSize:12,fontWeight:600,color:ok?C.gn:C.mt,textAlign:"center"}}>{sn}</div>
                         <div style={{display:"flex",alignItems:"center",gap:3}}>
                           <button onClick={()=>adj(ex.id,sn,"weight",-ex.increment)} style={{...tbtn,flexShrink:0}}>-</button>
-                          <input type="number" inputMode="decimal" value={s.weight||""} placeholder="lbs" onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
+                          <input type="number" inputMode="decimal" value={s.weight||""} placeholder={todayWeight?`${todayWeight}`:"lbs"} onChange={e=>ul(ex.id,sn,"weight",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px"}}/>
                           <button onClick={()=>adj(ex.id,sn,"weight",ex.increment)} style={{...tbtn,flexShrink:0}}>+</button>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:3}}>
                           <button onClick={()=>adj(ex.id,sn,"reps",-1)} style={{...tbtn,flexShrink:0}}>-</button>
-                          <input type="number" inputMode="numeric" value={s.reps||""} placeholder={`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
+                          <input type="number" inputMode="numeric" value={s.reps||""} placeholder={tgtReps(i)!=null?`${tgtReps(i)}`:`${ex.repMin}-${ex.repMax}`} onChange={e=>ul(ex.id,sn,"reps",e.target.value)} onBlur={()=>sv(ex.id,sn)} style={{...inp,flex:1,minWidth:0,padding:"10px 4px",borderColor:hi?`${C.gn}55`:lo?`${C.rd}55`:C.bd}}/>
                           <button onClick={()=>adj(ex.id,sn,"reps",1)} style={{...tbtn,flexShrink:0}}>+</button>
                         </div>
-                        <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"PR":lo?"low":ok?"ok":""}</div>
+                        <div style={{fontSize:9,fontFamily:mono,color:hi?C.gn:lo?C.rd:C.mt,textAlign:"center"}}>{hi?"top":lo?"low":ok?"ok":""}</div>
                       </div>
                       {ok&&<div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,alignItems:"center",marginTop:4}}>
                         <div/>
@@ -1391,42 +1437,46 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   const latMeas=meas.length>0?meas[meas.length-1]:null;
   const latBW=latMeas?.bodyweight_lb||savedMt?.bw||205;
   const latBF=latMeas?.body_fat_pct||(latMeas?.waist_in&&latMeas?.neck_in&&latMeas?.height_in?navyBF(latMeas.waist_in,latMeas.neck_in,latMeas.height_in):null)||19.5;
-  const[calcW,setCalcW]=useState(String(latBW));const[calcH,setCalcH]=useState(String(latMeas?.height_in||71));const[calcAge,setCalcAge]=useState("30");const[calcBF,setCalcBF]=useState(String(parseFloat(latBF).toFixed(1)));const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState((!savedMt?.goalName||savedMt?.goalName==="Maintain")?"Cut":savedMt?.goalName);const[calcP,setCalcP]=useState("1.18");const[calcF,setCalcF]=useState("0.37");const[calcRC,setCalcRC]=useState(String(mt.restCarbs||Math.max(0,mt.carbs-100)));const[useEmpirical,setUseEmpirical]=useState(true);const[empiricalMaint,setEmpiricalMaint]=useState(String(cache.get("empiricalMaint")||"3100"));const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
+  const[calcW,setCalcW]=useState(String(latBW));const[calcH,setCalcH]=useState(String(latMeas?.height_in||71));const[calcAge,setCalcAge]=useState("30");const[calcBF,setCalcBF]=useState(String(parseFloat(latBF).toFixed(1)));const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(mt.goalName||savedMt?.goalName||"Maintain");const[calcP,setCalcP]=useState("1.18");const[calcF,setCalcF]=useState("0.37");const[calcRC,setCalcRC]=useState(String(mt.restCarbs||Math.max(0,mt.carbs-100)));const[useEmpirical,setUseEmpirical]=useState(true);const[empiricalMaint,setEmpiricalMaint]=useState(String(cache.get("empiricalMaint")||"3100"));const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
   const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);const scanLockRef=useRef(false);
+  const[saveErr,setSaveErr]=useState(null);
   const[showPlan,setShowPlan]=useState(false);
   const[plan,setPlan]=useState(null);
   const[planLoading,setPlanLoading]=useState(false);
   const[planError,setPlanError]=useState(null);
-  async function generatePlan(){setPlanLoading(true);setPlanError(null);setPlan(null);try{const res=await fetch("/api/meal-plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({foods:foods.filter(f=>f.calories>0).map(f=>({name:f.name.replace(/[^\x20-\x7E]/g,'').replace(/"/g,"'").trim(),portion_size:f.portion_size,portion_unit:f.portion_unit,protein_g:f.protein_g,carbs_g:f.carbs_g,fat_g:f.fat_g,calories:f.calories,category:f.category})),targets:{protein:mt.protein,carbs:mt.carbs,fat:mt.fat,calories:mt.calories}})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);const slots=["breakfast","lunch","dinner","snacks"];slots.forEach(slot=>{if(!Array.isArray(data[slot]))data[slot]=[];});setPlan(data);}catch(err){setPlanError(err.message||"Failed to generate plan");}finally{setPlanLoading(false);}}
+  async function generatePlan(){setPlanLoading(true);setPlanError(null);setPlan(null);try{const res=await fetch("/api/meal-plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({foods:foods.filter(f=>f.calories>0).map(f=>({name:f.name.replace(/[^\x20-\x7E]/g,'').replace(/"/g,"'").trim(),portion_size:f.portion_size,portion_unit:f.portion_unit,protein_g:f.protein_g,carbs_g:f.carbs_g,fat_g:f.fat_g,calories:f.calories,category:f.category})),targets:{protein:activeMt.protein,carbs:activeMt.carbs,fat:activeMt.fat,calories:activeMt.calories,goal:mt.goalName||"Maintain"}})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);const slots=["breakfast","lunch","dinner","snacks"];slots.forEach(slot=>{if(!Array.isArray(data[slot]))data[slot]=[];});setPlan(data);}catch(err){setPlanError(err.message||"Failed to generate plan");}finally{setPlanLoading(false);}}
   function planTotal(){if(!plan)return{protein:0,carbs:0,fat:0,calories:0};const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];return all.reduce((a,m)=>({protein:a.protein+(m.protein_g||0)*(m.portions||1),carbs:a.carbs+(m.carbs_g||0)*(m.portions||1),fat:a.fat+(m.fat_g||0)*(m.portions||1),calories:a.calories+(m.calories||0)*(m.portions||1)}),{protein:0,carbs:0,fat:0,calories:0});}
-  async function logPlanToday(){if(!plan)return;const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){if(!f.id)continue;const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions||1,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions||1});}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions||1});onPC();}}setShowPlan(false);setPlan(null);}
+  async function logPlanToday(){if(!plan)return;const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){if(!f.id)continue;const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions||1,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions||1});if(error)throw error;}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions||1});onPC();}}setShowPlan(false);setPlan(null);}
   useEffect(()=>{loadLog();loadRecent();},[]);
   async function loadLog(){try{const{data}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
   async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
-  async function add(f,portions=1){const entry={id:`t_${Date.now()}`,food:f.name,portions,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{data:ins}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions}).select().single();if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions});onPC();}setShowS(false);setShowRecent(false);setSearch("");}
-  async function rm(i){const e=log[i];setLog(p=>{const n=p.filter((_,x)=>x!==i);cache.set(`meals_${td}`,n);return n;});if(e?.id&&!String(e.id).startsWith("t")){try{await supabase.from("meal_log").delete().eq("id",e.id);}catch{addPending({type:"delete_meal",id:e.id});onPC();}}}
-  async function up(i,pt){const np=Math.max(0.25,pt);setLog(p=>{const n=p.map((m,x)=>x===i?{...m,portions:np}:m);cache.set(`meals_${td}`,n);return n;});const e=log[i];if(e?.id&&!String(e.id).startsWith("t")){try{await supabase.from("meal_log").update({portions:np}).eq("id",e.id);}catch{addPending({type:"update_portions",id:e.id,portions:np});onPC();}}}
-  async function saveNewFood(){if(!nf.name||!nf.calories)return;const entry={name:nf.name,portion_size:parseFloat(nf.portion_size)||1,portion_unit:nf.portion_unit||"serving",protein_g:parseFloat(nf.protein_g)||0,carbs_g:parseFloat(nf.carbs_g)||0,fat_g:parseFloat(nf.fat_g)||0,calories:parseFloat(nf.calories)||0,category:nf.category};try{const{data}=await supabase.from("foods").insert(entry).select().single();if(data)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));}catch{addPending({type:"insert_food",data:entry});onPC();setFoods(p=>[...p,{...entry,id:`t_${Date.now()}`}].sort((a,b)=>a.name.localeCompare(b.name)));}setNf({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});setShowAdd(false);}
+  async function add(f,portions=1){const entry={id:`t_${Date.now()}`,food:f.name,portions,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{data:ins,error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions}).select().single();if(error)throw error;if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions});onPC();}setShowS(false);setShowRecent(false);setSearch("");}
+  async function rm(i){const e=log[i];setLog(p=>{const n=p.filter((_,x)=>x!==i);cache.set(`meals_${td}`,n);return n;});if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").delete().eq("id",e.id);if(error)throw error;}catch{addPending({type:"delete_meal",id:e.id});onPC();}}}
+  async function up(i,pt){const np=Math.max(0.25,pt);setLog(p=>{const n=p.map((m,x)=>x===i?{...m,portions:np}:m);cache.set(`meals_${td}`,n);return n;});const e=log[i];if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").update({portions:np}).eq("id",e.id);if(error)throw error;}catch{addPending({type:"update_portions",id:e.id,portions:np});onPC();}}}
+  async function saveNewFood(){if(!nf.name||!nf.calories)return;const entry={name:nf.name,portion_size:parseFloat(nf.portion_size)||1,portion_unit:nf.portion_unit||"serving",protein_g:parseFloat(nf.protein_g)||0,carbs_g:parseFloat(nf.carbs_g)||0,fat_g:parseFloat(nf.fat_g)||0,calories:parseFloat(nf.calories)||0,category:nf.category};try{const{data,error}=await supabase.from("foods").insert(entry).select().single();if(error)throw error;if(data)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));}catch{addPending({type:"insert_food",data:entry});onPC();setFoods(p=>[...p,{...entry,id:`t_${Date.now()}`}].sort((a,b)=>a.name.localeCompare(b.name)));}setNf({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});setShowAdd(false);}
   const tot=log.reduce((a,m)=>({protein:a.protein+(m.protein||0)*m.portions,carbs:a.carbs+(m.carbs||0)*m.portions,fat:a.fat+(m.fat||0)*m.portions,calories:a.calories+(m.calories||0)*m.portions}),{protein:0,carbs:0,fat:0,calories:0});
-  const flt=foods.filter(f=>f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
-  function getSuggested(){const remPro=Math.max(0,mt.protein-Math.round(tot.protein));const remCal=Math.max(0,mt.calories-Math.round(tot.calories));const remFat=Math.max(0,mt.fat-Math.round(tot.fat));if(remPro<10||foods.length===0)return[];const loggedIds=new Set(log.map(m=>m.foodId).filter(Boolean));const proRatio=remPro*4/Math.max(remCal,1);const seed=Math.floor(Date.now()/3600000);return foods.filter(f => f.protein_g > 0 && f.calories >= 30 && !loggedIds.has(f.id) && !['Meal','Fast Food','Misc','Treat','Deli'].includes(f.category)).map((f,i)=>{const lean=f.protein_g*4/(f.calories||1);const calFit=1-Math.min(1,Math.abs(f.calories-remCal*0.3)/500);const fatPenalty=remFat<20&&f.fat_g>10?-0.5:0;const variety=Math.sin(seed+i*137.5)*0.15;return{...f,score:lean*proRatio*60+calFit*20+fatPenalty+variety};}).sort((a,b)=>b.score-a.score).slice(0,3);}
+  const flt=foods.filter(f=>f.category!=="One-off"&&f.name.toLowerCase().includes(search.toLowerCase())&&(cat==="All"||f.category===cat));
+  function getSuggested(){const remPro=Math.max(0,mt.protein-Math.round(tot.protein));const remCal=Math.max(0,mt.calories-Math.round(tot.calories));const remFat=Math.max(0,mt.fat-Math.round(tot.fat));if(remPro<10||foods.length===0)return[];const loggedIds=new Set(log.map(m=>m.foodId).filter(Boolean));const proRatio=remPro*4/Math.max(remCal,1);const seed=Math.floor(Date.now()/3600000);return foods.filter(f => f.protein_g > 0 && f.calories >= 30 && !loggedIds.has(f.id) && !['Meal','Fast Food','Misc','Treat','Deli','One-off'].includes(f.category)).map((f,i)=>{const lean=f.protein_g*4/(f.calories||1);const calFit=1-Math.min(1,Math.abs(f.calories-remCal*0.3)/500);const fatPenalty=remFat<20&&f.fat_g>10?-0.5:0;const variety=Math.sin(seed+i*137.5)*0.15;return{...f,score:lean*proRatio*60+calFit*20+fatPenalty+variety};}).sort((a,b)=>b.score-a.score).slice(0,3);}
   const suggested=getSuggested();
   const remPro=Math.max(0,mt.protein-Math.round(tot.protein));
   const remCal=Math.max(0,mt.calories-Math.round(tot.calories));
-  function recalc(){const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;const bf=parseFloat(calcBF)||20;const leanMass=w*(1-bf/100);const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];const goal=GOALS.find(g=>g.name===calcG)||GOALS[1];const tdee=useEmpirical?parseFloat(empiricalMaint)||3100:calcTDEE(w,h,age,act.mult);const cal=Math.round(tdee+goal.delta);const protein=Math.round(leanMass*(parseFloat(calcP)||1.18));const fat=Math.max(70,Math.round(leanMass*(parseFloat(calcF)||0.37)));const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));const rc=parseInt(calcRC)||Math.max(0,carbs-100);const rcal=Math.round(cal-Math.max(0,carbs-rc)*4);setMt({protein,carbs,fat,calories:cal,goalName:calcG,bw:w,restCarbs:rc,restCalories:rcal});cache.set("mt",{protein,carbs,fat,calories:cal,goalName:calcG,bw:w,restCarbs:rc,restCalories:rcal});if(useEmpirical)cache.set("empiricalMaint",empiricalMaint);try{supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG}).eq("is_active",true);}catch{}setShowCalc(false);}
+  async function recalc(){const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;const bf=parseFloat(calcBF)||20;const leanMass=w*(1-bf/100);const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];const goal=GOALS.find(g=>g.name===calcG)||GOALS[1];const tdee=useEmpirical?parseFloat(empiricalMaint)||3100:calcTDEE(w,h,age,act.mult);const cal=Math.round(tdee+goal.delta);const protein=Math.round(leanMass*(parseFloat(calcP)||1.18));const fat=Math.max(70,Math.round(leanMass*(parseFloat(calcF)||0.37)));const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));const rc=parseInt(calcRC)||Math.max(0,carbs-100);const rcal=Math.round(cal-Math.max(0,carbs-rc)*4);setMt({protein,carbs,fat,calories:cal,goalName:calcG,bw:w,restCarbs:rc,restCalories:rcal});cache.set("mt",{protein,carbs,fat,calories:cal,goalName:calcG,bw:w,restCarbs:rc,restCalories:rcal});if(useEmpirical)cache.set("empiricalMaint",empiricalMaint);setShowCalc(false);try{const{error}=await supabase.from("macro_targets").update({protein_g_target:protein,carbs_g_target:carbs,fat_g_target:fat,calories_target:cal,bodyweight_lb:w,goal_name:calcG,protein_per_lb:parseFloat(calcP)||null,fat_per_lb:parseFloat(calcF)||null,rest_carbs_g:rc,rest_calories:rcal}).eq("is_active",true);if(error)throw error;setSaveErr(null);}catch(e){console.error("macro target save failed",e);setSaveErr("Targets saved on this phone only. The database save failed, so another device (or a reload) may show the old targets. Try Set as targets again when you have signal.");}}
   function previewMacros(overrideGoal){const w=parseFloat(calcW)||205,h=parseFloat(calcH)||71,age=parseFloat(calcAge)||30;const bf=parseFloat(calcBF)||20;const leanMass=w*(1-bf/100);const act=ACTIVITY.find(a=>a.name===calcAct)||ACTIVITY[2];const goal=GOALS.find(g=>g.name===(overrideGoal||calcG))||GOALS[1];const tdee=useEmpirical?parseFloat(empiricalMaint)||3100:calcTDEE(w,h,age,act.mult);const cal=Math.round(tdee+goal.delta);const protein=Math.round(leanMass*(parseFloat(calcP)||1.18));const fat=Math.max(70,Math.round(leanMass*(parseFloat(calcF)||0.37)));const carbs=Math.max(0,Math.round((cal-protein*4-fat*9)/4));return{protein,carbs,fat,calories:cal,tdee,leanMass:Math.round(leanMass)};}
   async function startScan(){scanLockRef.current=false;setShowScan(true);setShowAI(false);setAiResult(null);setScanStatus("Starting camera...");try{const ZXing=await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm");const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});streamRef.current=stream;if(scanRef.current){scanRef.current.srcObject=stream;scanRef.current.play();}setScanStatus("Point camera at barcode");const reader=new ZXing.BrowserMultiFormatReader();reader.decodeFromStream(stream,scanRef.current,async(result,err)=>{if(!result||scanLockRef.current)return;scanLockRef.current=true;const barcode=result.getText();if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setScanStatus("Looking up product...");try{const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);const data=await res.json();if(data.status===1&&data.product){const p=data.product;const n=p.nutriments;const hasServingData=n.proteins_serving!=null||n["energy-kcal_serving"]!=null;const servingQty=parseFloat(p.serving_quantity)||0;const servingSize=p.serving_size||"serving";let protein,carbs,fat,calories;if(hasServingData){protein=parseFloat(n.proteins_serving||0);carbs=parseFloat(n.carbohydrates_serving||0);fat=parseFloat(n.fat_serving||0);calories=parseFloat(n["energy-kcal_serving"]||0);}else if(servingQty>0){const scale=servingQty/100;protein=parseFloat(n.proteins||0)*scale;carbs=parseFloat(n.carbohydrates||0)*scale;fat=parseFloat(n.fat||0)*scale;calories=parseFloat(n["energy-kcal"]||0)*scale;}else{protein=parseFloat(n.proteins||0);carbs=parseFloat(n.carbohydrates||0);fat=parseFloat(n.fat||0);calories=parseFloat(n["energy-kcal"]||0);}setAiResult({name:p.product_name||p.generic_name||"Scanned food",portion_size:servingQty||100,portion_unit:servingSize,protein_g:Math.round(protein*10)/10,carbs_g:Math.round(carbs*10)/10,fat_g:Math.round(fat*10)/10,calories:Math.round(calories),notes:hasServingData?"From barcode scan":servingQty>0?"Scaled to serving size":"Per 100g — check serving size"});setShowScan(false);setShowAI(true);setScanStatus("Point camera at barcode");}else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);}}catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);}});}catch(e){setScanStatus(`Camera error: ${e.message}`);setTimeout(()=>setShowScan(false),2500);}}
   function stopScan(){scanLockRef.current=false;if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setShowScan(false);}
   function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
   async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);try{const res=await fetch("/api/ai-parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:aiText||undefined,imageBase64:aiImg||undefined,mimeType:aiImgMime})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);setAiResult({...data,protein_g:parseFloat(data.protein_g)||0,carbs_g:parseFloat(data.carbs_g)||0,fat_g:parseFloat(data.fat_g)||0,calories:parseFloat(data.calories)||0,portion_size:parseFloat(data.portion_size)||1});}catch(err){setAiError(err.message||"Something went wrong");}finally{setAiLoading(false);}}
-  async function logAIResult(saveToDb){if(!aiResult)return;if(saveToDb){const entry={name:aiResult.name,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving",protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,category:"Meal"};try{const{data}=await supabase.from("foods").insert(entry).select().single();if(data){setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));await add(data,1);return;}}catch{}}const entry={id:`t_${Date.now()}`,food:aiResult.name,portions:1,protein:aiResult.protein_g,carbs:aiResult.carbs_g,fat:aiResult.fat_g,calories:aiResult.calories,foodId:null};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);}
+  // "Log only" still needs a foods row so the meal_log entry survives reloads and other devices;
+  // it is stored as category "One-off" and hidden from search and suggestions.
+  async function logAIResult(saveToDb){if(!aiResult)return;{const entry={name:aiResult.name,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving",protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,category:saveToDb?"Meal":"One-off"};try{const{data,error}=await supabase.from("foods").insert(entry).select().single();if(error)throw error;if(data){if(saveToDb)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));await add(data,1);setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);return;}}catch{}}const entry={id:`t_${Date.now()}`,food:aiResult.name,portions:1,protein:aiResult.protein_g,carbs:aiResult.carbs_g,fat:aiResult.fat_g,calories:aiResult.calories,foodId:null};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);}
 
   return(
     <div style={{padding:"24px 16px"}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
-        <div><div style={{fontSize:20,fontWeight:700}}>Fuel</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>{activeMt.calories} cal · {training?"Training day":"Rest day"}</div></div>
+        <div><div style={{fontSize:20,fontWeight:700}}>Fuel</div><div style={{fontSize:11,color:C.mt,marginTop:1}}>{activeMt.calories} cal · {training?"Training day":"Rest day"}{mt.goalName?` · ${mt.goalName}`:""}</div></div>
         <button onClick={()=>setShowCalc(!showCalc)} style={{...btnGhost,color:showCalc?C.ac:C.mt,borderColor:showCalc?`${C.ac}44`:C.bd,marginTop:2}}>Calculator</button>
       </div>
+      {saveErr&&<div style={{padding:"8px 12px",marginBottom:12,background:`${C.rd}10`,border:`1px solid ${C.rd}33`,borderRadius:8,fontSize:11,color:C.rd}}>{saveErr}</div>}
       {showCalc&&(()=>{const prev=previewMacros();return(<div style={{...card,marginBottom:14}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}><div><div style={{...lbl2,marginBottom:4}}>Weight (lb)</div><input type="number" value={calcW} onChange={e=>setCalcW(e.target.value)} style={{...inp,fontSize:13}}/></div><div><div style={{...lbl2,marginBottom:4}}>Height (in)</div><input type="number" value={calcH} onChange={e=>setCalcH(e.target.value)} style={{...inp,fontSize:13}}/></div><div><div style={{...lbl2,marginBottom:4}}>Age</div><input type="number" value={calcAge} onChange={e=>setCalcAge(e.target.value)} style={{...inp,fontSize:13}}/></div><div><div style={{...lbl2,marginBottom:4}}>Body Fat %</div><input type="number" value={calcBF} onChange={e=>setCalcBF(e.target.value)} style={{...inp,fontSize:13}}/></div></div>
         <div style={{padding:"7px 12px",background:`${C.gn}10`,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.mt}}>Lean mass (protein anchor)</span><span style={{fontFamily:mono,fontSize:13,fontWeight:700,color:C.gn}}>{prev.leanMass} lb</span></div>
@@ -1514,7 +1564,7 @@ function Body({meas,onAdd,online,onPC}){
   const fields=[{k:"measure_date",l:"Date",t:"date"},{k:"bodyweight_lb",l:"Weight (lb)",t:"number"},{k:"chest_in",l:"Chest",t:"number"},{k:"waist_in",l:"Waist *",t:"number"},{k:"hips_in",l:"Hips",t:"number"},{k:"r_arm_in",l:"R Arm",t:"number"},{k:"l_arm_in",l:"L Arm",t:"number"},{k:"r_forearm_in",l:"R Forearm",t:"number"},{k:"l_forearm_in",l:"L Forearm",t:"number"},{k:"shoulder_circ_in",l:"Shoulders",t:"number"},{k:"thigh_in",l:"Thigh",t:"number"},{k:"calf_in",l:"Calf",t:"number"},{k:"neck_in",l:"Neck *",t:"number"}];
   const init={};fields.forEach(f=>init[f.k]=f.k==="measure_date"?localDate():"");
   const[fm,setFm]=useState(init);
-  async function save(){if(!fm.bodyweight_lb)return;const e={};Object.entries(fm).forEach(([k,v])=>{e[k]=k==="measure_date"?v:(parseFloat(v)||null);});const lat=meas[meas.length-1];const h=lat?.height_in||70;if(e.waist_in&&e.neck_in)e.body_fat_pct=parseFloat(navyBF(e.waist_in,e.neck_in,h));e.height_in=h;try{const{data}=await supabase.from("measurements").insert(e).select().single();if(data){onAdd(data);setShowF(false);}}catch{onAdd({...e,id:`t_${Date.now()}`});addPending({type:"insert_measurement",data:e});onPC();setShowF(false);}}
+  async function save(){if(!fm.bodyweight_lb)return;const e={};Object.entries(fm).forEach(([k,v])=>{e[k]=k==="measure_date"?v:(parseFloat(v)||null);});const lat=meas[meas.length-1];const h=lat?.height_in||70;if(e.waist_in&&e.neck_in)e.body_fat_pct=parseFloat(navyBF(e.waist_in,e.neck_in,h));e.height_in=h;try{const{data,error}=await supabase.from("measurements").insert(e).select().single();if(error)throw error;if(data){onAdd(data);setShowF(false);}}catch{onAdd({...e,id:`t_${Date.now()}`});addPending({type:"insert_measurement",data:e});onPC();setShowF(false);}}
   const lat=meas[meas.length-1];const prev=meas.length>1?meas[meas.length-2]:null;
   function delta(c,p){if(!c||!p)return null;const d=(c-p).toFixed(1);return parseFloat(d)>0?`+${d}`:d;}
   const latBF=lat?.body_fat_pct||(lat?.waist_in&&lat?.neck_in&&lat?.height_in?navyBF(lat.waist_in,lat.neck_in,lat.height_in):null);
@@ -1579,7 +1629,7 @@ function Stats({meas,week,online,activeProgram}){
       const sessionIds=sessions.map(s=>s.id);
       const{data:sets}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,rir,exercises(name,primary_muscle)").in("session_id",sessionIds).gt("reps",0);
       const sessionsCompleted=sessions.length;
-      const completionPct=Math.round((sessionsCompleted/5)*100);
+      const completionPct=Math.round((sessionsCompleted/4)*100);
       const rirs=(sets||[]).filter(s=>s.rir!==null&&s.rir!==undefined).map(s=>s.rir);
       const avgRIR=rirs.length?parseFloat((rirs.reduce((a,b)=>a+b,0)/rirs.length).toFixed(1)):null;
       const volumeByMuscle={};
@@ -1596,9 +1646,9 @@ function Stats({meas,week,online,activeProgram}){
       setReviewData({week:wk,sessionsCompleted,completionPct,avgRIR,volumeByMuscle,topGains});
     }catch{setReviewData(null);}
   }
-  async function loadPRs(){try{const{data}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,exercises(name)").order("weight_lb",{ascending:false});if(data){const best={};data.forEach(s=>{const n=s.exercises?.name;if(!n||!s.weight_lb||!s.reps)return;const e1=s.weight_lb*(1+s.reps/30);if(!best[n]||e1>best[n].est1rm)best[n]={exercise:n,weight:s.weight_lb,reps:s.reps,est1rm:e1};});const p=Object.values(best).sort((a,b)=>b.est1rm-a.est1rm);setPrs(p);cache.set("prs",p);}}catch{const c=cache.get("prs");if(c)setPrs(c);}}
+  async function loadPRs(){try{const data=await fetchAll(()=>supabase.from("workout_sets").select("exercise_id,weight_lb,reps,exercises(name)").gt("reps",0).order("id"));if(data){const best={};data.forEach(s=>{const n=s.exercises?.name;if(!n||!s.weight_lb||!s.reps)return;const e1=s.weight_lb*(1+s.reps/30);if(!best[n]||e1>best[n].est1rm)best[n]={exercise:n,weight:s.weight_lb,reps:s.reps,est1rm:e1};});const p=Object.values(best).sort((a,b)=>b.est1rm-a.est1rm);setPrs(p);cache.set("prs",p);}}catch{const c=cache.get("prs");if(c)setPrs(c);}}
   async function loadVol(){try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,reps,exercises(primary_muscle))").eq("week_number",week).eq("program_id",activeProgram);if(data){const m={};data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0&&ws.exercises?.primary_muscle){const mu=ws.exercises.primary_muscle;m[mu]=(m[mu]||0)+1;}}));setVol(m);}}catch{}}
-  async function loadMuscleTrend(){try{const{data}=await supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0);if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
+  async function loadMuscleTrend(){try{const data=await fetchAll(()=>supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0).order("id"));if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
   const wd=meas.filter(m=>m.bodyweight_lb);
   const bfData=meas.filter(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return bf!==null;}).map((m,i)=>{const bf=parseFloat(m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null));return{x:i+1,y:bf};});
   const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
