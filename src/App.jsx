@@ -85,6 +85,73 @@ async function loadVolTargets(){
 }
 loadVolTargets();
 
+// ── Bodyweight trend & adaptive maintenance ──────────────────────────────────
+// One weight per day (last entry wins). The trend is an exponentially weighted
+// average (10% per day, gaps handled), which smooths out water and food noise.
+// The weekly rate is a least-squares slope over the last 21 days.
+function dayNum(ds){const[y,m,d]=String(ds).slice(0,10).split("-").map(Number);return Math.round(Date.UTC(y,m-1,d)/86400000);}
+function dailyWeights(meas){const by={};(meas||[]).forEach(m=>{const w=parseFloat(m.bodyweight_lb);if(w>0&&m.measure_date)by[m.measure_date]=w;});return Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([date,w])=>({date,w,t:dayNum(date)}));}
+function slopePerDay(pts){const n=pts.length;if(n<2)return null;const mx=pts.reduce((s,p)=>s+p.t,0)/n,my=pts.reduce((s,p)=>s+p.w,0)/n;const den=pts.reduce((s,p)=>s+(p.t-mx)**2,0);if(!den)return null;return pts.reduce((s,p)=>s+(p.t-mx)*(p.w-my),0)/den;}
+function weightTrend(meas){
+  const pts=dailyWeights(meas);if(!pts.length)return null;
+  let tr=pts[0].w;
+  const series=pts.map((p,i)=>{if(i>0){const a=1-Math.pow(0.9,p.t-pts[i-1].t);tr=tr+a*(p.w-tr);}return{...p,trend:Math.round(tr*10)/10};});
+  const today=dayNum(localDate());
+  const recent=pts.filter(p=>today-p.t<=21);
+  const sl=recent.length>=5&&recent[recent.length-1].t-recent[0].t>=10?slopePerDay(recent):null;
+  return{series,trend:series[series.length-1].trend,last:pts[pts.length-1],rate:sl==null?null:sl*7,recentCount:recent.length,daysSinceLast:today-pts[pts.length-1].t};
+}
+// Target weekly change as % of bodyweight. Gaining ranges follow Iraki et al. 2019
+// (0.25-0.5%/wk for novice/intermediate); cutting 0.5-1%/wk.
+const GOAL_RATES={"Cut":[-1,-0.5],"Maintain":[-0.25,0.25],"Lean Bulk":[0.25,0.5],"Bulk":[0.5,0.75]};
+function rateAdvice(rate,bw,goal){
+  const band=GOAL_RATES[goal]||GOAL_RATES["Maintain"];if(rate==null||!bw)return null;
+  const lo=band[0]*bw/100,hi=band[1]*bw/100,mid=(lo+hi)/2;
+  if(rate>=lo&&rate<=hi)return{ok:true,lo,hi,text:`On target for ${goal}`};
+  const kcal=Math.max(-400,Math.min(400,Math.round(((mid-rate)*3500/7)/50)*50));
+  return{ok:false,lo,hi,kcal,text:`${rate<lo?"Below":"Above"} the ${goal} range. ${kcal>0?"Add":"Cut"} about ${Math.abs(kcal)} kcal/day.`};
+}
+// Maintenance from your own data: average logged intake minus the energy implied
+// by the weight change over the same window (~3,500 kcal per lb). Days under
+// 1,200 kcal logged are treated as incomplete and skipped.
+async function estimateMaintenance(meas,windowDays=28){
+  const pts=dailyWeights(meas);const today=dayNum(localDate());
+  const win=pts.filter(p=>today-p.t<=windowDays);
+  if(win.length<6||win[win.length-1].t-win[0].t<14)return{ready:false,reason:`Needs 6+ weigh-ins over 14+ days (have ${win.length})`};
+  const since=new Date(Date.now()-windowDays*86400000);const sinceStr=`${since.getFullYear()}-${String(since.getMonth()+1).padStart(2,"0")}-${String(since.getDate()).padStart(2,"0")}`;
+  const rows=await fetchAll(()=>supabase.from("meal_log").select("log_date,portions,foods(calories)").gte("log_date",sinceStr).order("id"));
+  const byDay={};rows.forEach(r=>{byDay[r.log_date]=(byDay[r.log_date]||0)+(parseFloat(r.foods?.calories)||0)*(parseFloat(r.portions)||1);});
+  const full=Object.values(byDay).filter(k=>k>=1200);
+  if(full.length<10)return{ready:false,reason:`Needs 10+ fully logged days (have ${full.length})`};
+  const avgIn=full.reduce((a,b)=>a+b,0)/full.length;const sl=slopePerDay(win);
+  return{ready:true,maint:Math.round((avgIn-sl*3500)/10)*10,avgIn:Math.round(avgIn),rate:sl*7,days:full.length,weighIns:win.length};
+}
+
+// Fractional volume: a working set counts 1.0 for the primary muscle and 0.5 for each
+// secondary muscle (exercises.secondary_muscles), per Pelland et al. 2025. Upper-chest
+// work also counts toward the total-chest target, as volume_targets intends.
+const VOL_ROLLUP={"Upper Chest":["Chest"]};
+function muscleCredits(e){if(!e?.primary_muscle)return[];const out=[{m:e.primary_muscle,w:1}];(VOL_ROLLUP[e.primary_muscle]||[]).forEach(m=>out.push({m,w:1}));(e.secondary_muscles||[]).forEach(m=>{if(!out.some(o=>o.m===m))out.push({m,w:0.5});});return out;}
+function fmtSets(x){const r=Math.round(x*2)/2;return Number.isInteger(r)?String(r):r.toFixed(1);}
+
+// ── Stall detection ──────────────────────────────────────────────────────────
+// Per exercise, each logged session is one "exposure" scored by its best estimated
+// 1RM (Epley). Stalled = the best of the last 3 exposures is no better than the best
+// before them. If those 3 came right after a 3+ week break, it's "rebuilding" instead.
+function exposuresFromSets(rows){
+  const by={};rows.forEach(r=>{const ws=r.workout_sessions||{};if(ws.week_type==="Deload"||!(r.weight_lb>0)||!(r.reps>0))return;const k=r.session_id;if(!by[k])by[k]={date:ws.session_date||"",best:0};by[k].best=Math.max(by[k].best,epley1RM(r.weight_lb,r.reps));});
+  return Object.values(by).filter(e=>e.date).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function stallCheck(exp){
+  if(!exp||exp.length<4)return null;
+  const last=exp.slice(-3),prior=exp.slice(0,-3);
+  const bestPrior=Math.max(...prior.map(e=>e.best)),bestRecent=Math.max(...last.map(e=>e.best));
+  const gapDays=dayNum(last[0].date)-dayNum(prior[prior.length-1].date);
+  const stalled=bestRecent<=bestPrior*1.005;
+  return{stalled:stalled&&gapDays<21,rebuilding:stalled&&gapDays>=21,bestPrior,bestRecent,lastDate:last[2].date,n:exp.length};
+}
+function stallTip(isCompound){return isCompound?"Drop the load about 10% and build back up over 3 sessions, or swap to a close variation.":"Add reps before load, use a smaller jump (cable or machine), or add one set.";}
+
 // Supabase returns at most 1,000 rows per request; page through when a view needs all history.
 async function fetchAll(build,page=1000){let out=[];for(let from=0;;from+=page){const{data,error}=await build().range(from,from+page-1);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<page)break;}return out;}
 
@@ -522,9 +589,83 @@ function CaliWorkoutsSection({ supabase }) {
   return null;
 }
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+// Supabase Auth gates the app. Data access is limited by RLS to emails in
+// private.app_users (see migration auth_allowlist_and_authenticated_policies).
+// The session is kept in localStorage by supabase-js, so this works offline once signed in.
+
+async function authHeaders(){try{const{data}=await supabase.auth.getSession();const t=data?.session?.access_token;return t?{Authorization:`Bearer ${t}`}:{};}catch{return{};}}
+async function signOut(){try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));}
+
+function Splash({msg}){return(<div style={{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:sans}}><div style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:C.tx,letterSpacing:"0.05em"}}>IRON<span style={{color:C.ac}}>LOG</span></div><div style={{fontSize:11,color:C.mt,marginTop:8}}>{msg||"Loading..."}</div></div></div>);}
+
+function Login(){
+  const[email,setEmail]=useState(()=>cache.get("last_email")||"");
+  const[pw,setPw]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[msg,setMsg]=useState(null);
+  const[mode,setMode]=useState("signin");
+  async function run(fn){setBusy(true);setMsg(null);try{cache.set("last_email",email.trim());await fn();}catch(e){setMsg({err:true,t:e?.message||"Something went wrong"});}finally{setBusy(false);}}
+  const signIn=()=>run(async()=>{const{error}=await supabase.auth.signInWithPassword({email:email.trim(),password:pw});if(error)throw error;});
+  const signUp=()=>run(async()=>{const{data,error}=await supabase.auth.signUp({email:email.trim(),password:pw,options:{emailRedirectTo:window.location.origin}});if(error)throw error;if(!data.session)setMsg({t:"Check your email and tap the confirmation link, then come back here and sign in."});});
+  const link=()=>run(async()=>{const{error}=await supabase.auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin,shouldCreateUser:false}});if(error)throw error;setMsg({t:"Sign-in link sent. Open it on this device."});});
+  const reset=()=>run(async()=>{const{error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:window.location.origin});if(error)throw error;setMsg({t:"Password reset email sent."});});
+  const can=email.includes("@")&&(mode==="link"||pw.length>=6);
+  return(
+    <div style={{background:C.bg,minHeight:"100vh",color:C.tx,fontFamily:sans,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{width:"100%",maxWidth:360}}>
+        <div style={{fontSize:24,fontWeight:800,letterSpacing:"0.01em",marginBottom:4}}>IRON<span style={{color:C.ac}}>LOG</span></div>
+        <div style={{fontSize:12,color:C.mt,marginBottom:20}}>{mode==="signup"?"Create your account":mode==="link"?"Email me a sign-in link":"Sign in"}</div>
+        <div style={{...lbl2,marginBottom:4}}>Email</div>
+        <input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} style={{...inpL,marginBottom:10}} placeholder="you@example.com"/>
+        {mode!=="link"&&<><div style={{...lbl2,marginBottom:4}}>Password</div>
+        <input type="password" autoComplete={mode==="signup"?"new-password":"current-password"} value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&can&&(mode==="signup"?signUp():signIn())} style={{...inpL,marginBottom:14}} placeholder={mode==="signup"?"6+ characters":""}/></>}
+        <button disabled={!can||busy} onClick={mode==="signup"?signUp:mode==="link"?link:signIn} style={{...btnP,opacity:!can||busy?0.5:1,marginBottom:10}}>{busy?"...":mode==="signup"?"Create account":mode==="link"?"Send link":"Sign in"}</button>
+        {msg&&<div style={{padding:"8px 12px",marginBottom:10,borderRadius:8,fontSize:12,background:msg.err?`${C.rd}10`:`${C.gn}10`,border:`1px solid ${msg.err?C.rd:C.gn}33`,color:msg.err?C.rd:C.gn}}>{msg.t}</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:12,fontSize:11}}>
+          {mode!=="signin"&&<button onClick={()=>{setMode("signin");setMsg(null);}} style={{background:"none",border:"none",color:C.ac,cursor:"pointer",padding:0,fontSize:11}}>Sign in with password</button>}
+          {mode!=="signup"&&<button onClick={()=>{setMode("signup");setMsg(null);}} style={{background:"none",border:"none",color:C.ac,cursor:"pointer",padding:0,fontSize:11}}>Create account</button>}
+          {mode!=="link"&&<button onClick={()=>{setMode("link");setMsg(null);}} style={{background:"none",border:"none",color:C.ac,cursor:"pointer",padding:0,fontSize:11}}>Email me a link</button>}
+          {mode==="signin"&&email.includes("@")&&<button onClick={reset} style={{background:"none",border:"none",color:C.mt,cursor:"pointer",padding:0,fontSize:11}}>Forgot password</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NoAccess({email}){
+  return(<div style={{background:C.bg,minHeight:"100vh",color:C.tx,fontFamily:sans,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div style={{maxWidth:360}}>
+    <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Signed in, but no access yet</div>
+    <div style={{fontSize:12,color:C.mt,lineHeight:1.6,marginBottom:16}}>{email} is not on this app's allowlist. Ask the owner to add it, then sign in again.</div>
+    <button onClick={signOut} style={btnS}>Sign out</button>
+  </div></div>);
+}
+
+export default function Root(){
+  const[session,setSession]=useState(undefined);
+  const[access,setAccess]=useState("checking");
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data})=>setSession(data?.session||null)).catch(()=>setSession(null));
+    const{data:sub}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s||null));
+    return()=>sub?.subscription?.unsubscribe();
+  },[]);
+  const uid=session?.user?.id;
+  useEffect(()=>{
+    if(!uid){setAccess("checking");return;}
+    let live=true;
+    (async()=>{try{const{data,error}=await supabase.from("programs").select("id").limit(1);if(!live)return;if(error){setAccess("ok");return;}setAccess(data&&data.length?"ok":"denied");}catch{if(live)setAccess("ok");}})();
+    return()=>{live=false;};
+  },[uid]);
+  if(session===undefined)return<Splash/>;
+  if(!session)return<Login/>;
+  if(access==="checking")return<Splash/>;
+  if(access==="denied")return<NoAccess email={session.user?.email}/>;
+  return<App key={uid} userEmail={session.user?.email}/>;
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
-export default function App(){
+function App({userEmail}){
   const[tab,setTab]=useState("train");
   const[days,setDays]=useState([]);
   const[foods,setFoods]=useState([]);
@@ -604,10 +745,10 @@ export default function App(){
           </div>
         </div>
       )}
-      {tab==="train"&&!selDay&&<DaySelect days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram} meas={meas} onAddMeas={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))}/>}
+      {tab==="train"&&!selDay&&<DaySelect userEmail={userEmail} days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram} meas={meas} onAddMeas={(m,replace)=>setMeas(p=>(replace?p.map(x=>x.id===m.id?m:x):[...p,m]).sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))}/>}
       {tab==="train"&&selDay&&<Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} online={online} onPC={()=>setPc(getPending().length)} activeProgram={activeProgram}/>}
       {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)}/>}
-      {tab==="body"&&<Body meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} online={online} onPC={()=>setPc(getPending().length)}/>}
+      {tab==="body"&&<Body mt={mt} meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} online={online} onPC={()=>setPc(getPending().length)}/>}
       {tab==="stats"&&<Stats meas={meas} week={week} online={online} activeProgram={activeProgram}/>}
       {tab==="skills"&&<SkillsSection supabase={supabase}/>}
       {tab==="cali"&&<CaliWorkoutsSection supabase={supabase}/>}
@@ -909,7 +1050,7 @@ function MuscleDiagram({muscle,color,imageUrl}){
   );
 }
 
-function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online,activeProgram,switchProgram,meas,onAddMeas}){
+function DaySelect({userEmail,days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWeekType,online,activeProgram,switchProgram,meas,onAddMeas}){
   const[showCfg,setShowCfg]=useState(false);
   const[wc,setWc]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -926,6 +1067,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
   const latMeas=meas&&meas.length>0?meas[meas.length-1]:null;
   const todayBW=latMeas?.measure_date===localDate()?latMeas?.bodyweight_lb:null;
   const lastBW=latMeas?.bodyweight_lb||null;
+  const wt=useMemo(()=>weightTrend(meas),[meas]);
 
   useEffect(()=>{lc();loadSummary();},[week,activeProgram]);
 
@@ -934,6 +1076,9 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
     const lat=meas&&meas.length>0?meas[meas.length-1]:null;
     const entry={measure_date:localDate(),bodyweight_lb:parseFloat(bwInput)||null};
     if(lat?.height_in)entry.height_in=lat.height_in;
+    // One weigh-in per day: editing today's weight updates the row instead of adding another.
+    const todayRow=lat&&lat.measure_date===entry.measure_date&&lat.id&&!String(lat.id).startsWith("t_")?lat:null;
+    if(todayRow){try{const{data,error}=await supabase.from("measurements").update({bodyweight_lb:entry.bodyweight_lb}).eq("id",todayRow.id).select().single();if(error)throw error;if(data)onAddMeas(data,true);}catch{onAddMeas({...todayRow,bodyweight_lb:entry.bodyweight_lb},true);}setShowBWInput(false);setBwInput("");return;}
     try{const{data,error}=await supabase.from("measurements").insert(entry).select().single();if(error)throw error;if(data)onAddMeas(data);}
     catch{onAddMeas({...entry,id:`t_${Date.now()}`});addPending({type:"insert_measurement",data:entry});}
     setShowBWInput(false);setBwInput("");
@@ -954,16 +1099,16 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
   async function loadSummary(){
     if(!online)return;
     try{
-      const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle))").eq("week_number",week).eq("program_id",activeProgram);
+      const{data}=await supabase.from("workout_sessions").select("id,training_day_id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle,secondary_muscles))").eq("week_number",week).eq("program_id",activeProgram);
       if(!data?.length){setSummary(null);return;}
       let totalSets=0,completedSets=0,prCount=0;const muscles={};
-      const{data:prevData}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle))").eq("week_number",week-1).eq("program_id",activeProgram);
+      const{data:prevData}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,weight_lb,reps,exercises(name,primary_muscle,secondary_muscles))").eq("week_number",week-1).eq("program_id",activeProgram);
       const prevBest={};const prevMuscles={};
       if(prevData)prevData.forEach(s=>s.workout_sets.forEach(ws=>{
         const n=ws.exercises?.name;if(n&&ws.weight_lb){if(!prevBest[n]||ws.weight_lb>prevBest[n])prevBest[n]=ws.weight_lb;}
-        if(ws.reps>0&&ws.exercises?.primary_muscle){const m=ws.exercises.primary_muscle;prevMuscles[m]=(prevMuscles[m]||0)+1;}
+        if(ws.reps>0&&ws.exercises?.primary_muscle){muscleCredits(ws.exercises).forEach(({m,w})=>{prevMuscles[m]=(prevMuscles[m]||0)+w;});}
       }));
-      data.forEach(s=>{s.workout_sets.forEach(ws=>{totalSets++;if(ws.reps>0){completedSets++;if(ws.exercises?.primary_muscle){const m=ws.exercises.primary_muscle;muscles[m]=(muscles[m]||0)+1;}const n=ws.exercises?.name;if(n&&ws.weight_lb&&prevBest[n]&&ws.weight_lb>prevBest[n])prCount++;}});});
+      data.forEach(s=>{s.workout_sets.forEach(ws=>{totalSets++;if(ws.reps>0){completedSets++;if(ws.exercises?.primary_muscle){muscleCredits(ws.exercises).forEach(({m,w})=>{muscles[m]=(muscles[m]||0)+w;});}const n=ws.exercises?.name;if(n&&ws.weight_lb&&prevBest[n]&&ws.weight_lb>prevBest[n])prCount++;}});});
       const muscleDeltas={};const allMuscles=new Set([...Object.keys(muscles),...Object.keys(prevMuscles)]);
       allMuscles.forEach(m=>{const delta=(muscles[m]||0)-(prevMuscles[m]||0);if(delta!==0)muscleDeltas[m]=delta;});
       setSummary({totalSets,completedSets,prCount,sessionsLogged:data.length,muscles,muscleDeltas});
@@ -1005,6 +1150,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
             {todayBW&&<span style={{fontSize:10,color:C.gn,marginLeft:6,fontWeight:500}}>logged today</span>}
             {!todayBW&&lastBW&&<span style={{fontSize:10,color:C.mt,marginLeft:6}}>last logged</span>}
           </div>
+          {wt&&wt.daysSinceLast<=21&&wt.recentCount>=2&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginTop:2}}>trend {wt.trend} lb{wt.rate!=null&&<span style={{color:C.tx2}}> · {wt.rate>=0?"+":""}{wt.rate.toFixed(1)} lb/wk</span>}</div>}
         </div>
         {showBWInput?(
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -1084,7 +1230,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
               <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,fontFamily:mono,color:s.c}}>{s.v}</div><div style={{...hlbl,marginTop:3}}>{s.l}</div></div>
             ))}
           </div>
-          {Object.keys(summary.muscles).length>0&&<div><div style={{...lbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort(([ma,sa],[mb,sb])=>{const pa=VOL_TARGETS[ma]?.priority||"LOW",pb=VOL_TARGETS[mb]?.priority||"LOW";const po={HIGH:0,MED:1,LOW:2};return(po[pa]??2)-(po[pb]??2)||sb-sa;}).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const under=tgt&&sets<tgt.min,inR=tgt&&sets>=tgt.min&&sets<=tgt.max,over=tgt&&sets>tgt.max;const sc=inR?C.gn:under?C.am:over?C.rd:C.mt;const isHigh=tgt?.priority==="HIGH";const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:isHigh?`${C.ac}10`:C.sf2,border:`1px solid ${isHigh?`${C.ac}33`:tgt?`${sc}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>{isHigh&&<span style={{fontSize:7,color:C.ac,fontWeight:700}}>★</span>}<span style={{color:C.tx}}>{m}</span><span style={{color:sc}}>{sets}</span>{tgt&&<span style={{fontSize:8,color:C.mt}}>/{tgt.min}-{tgt.max}</span>}{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${delta}`:delta}</span>}</span>;})}</div></div>}
+          {Object.keys(summary.muscles).length>0&&<div><div style={{...lbl,marginBottom:7}}>Volume by muscle</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{Object.entries(summary.muscles).sort(([ma,sa],[mb,sb])=>{const pa=VOL_TARGETS[ma]?.priority||"LOW",pb=VOL_TARGETS[mb]?.priority||"LOW";const po={HIGH:0,MED:1,LOW:2};return(po[pa]??2)-(po[pb]??2)||sb-sa;}).map(([m,sets])=>{const tgt=VOL_TARGETS[m];const under=tgt&&sets<tgt.min,inR=tgt&&sets>=tgt.min&&sets<=tgt.max,over=tgt&&sets>tgt.max;const sc=inR?C.gn:under?C.am:over?C.rd:C.mt;const isHigh=tgt?.priority==="HIGH";const delta=summary.muscleDeltas?.[m];return<span key={m} style={{padding:"3px 8px",borderRadius:4,background:isHigh?`${C.ac}10`:C.sf2,border:`1px solid ${isHigh?`${C.ac}33`:tgt?`${sc}33`:C.bd}`,fontSize:10,fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>{isHigh&&<span style={{fontSize:7,color:C.ac,fontWeight:700}}>★</span>}<span style={{color:C.tx}}>{m}</span><span style={{color:sc}}>{fmtSets(sets)}</span>{tgt&&<span style={{fontSize:8,color:C.mt}}>/{tgt.min}-{tgt.max}</span>}{delta!=null&&<span style={{color:delta>0?C.gn:C.rd,fontSize:9}}>{delta>0?`+${fmtSets(delta)}`:fmtSets(delta)}</span>}</span>;})}</div></div>}
         </div>
       )}
 
@@ -1106,6 +1252,7 @@ function DaySelect({days,onSelect,week,setWeek,restDur,setRestDur,weekType,setWe
               {[0,60,90,120,150,180,240].map(t=><button key={t} onClick={()=>setRestDur(t)} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${restDur===t?C.ac:C.bd}`,background:restDur===t?`${C.ac}15`:"transparent",color:restDur===t?C.ac:C.mt,fontSize:12,fontFamily:mono,cursor:"pointer"}}>{t===0?"Auto":`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`}</button>)}
             </div>
           </div>
+          <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.bd}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span style={{fontSize:11,color:C.mt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Signed in as {userEmail||"?"}</span><button onClick={signOut} style={{...btnGhost,padding:"6px 12px",fontSize:11,flexShrink:0}}>Sign out</button></div>
         </div>
       )}
 
@@ -1173,7 +1320,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   async function loadLast(){
     try{
       const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
-      const{data}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(600);
+      const{data}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(800);
       if(!data)return;
       const isCurrent=w=>w.workout_sessions?.week_number===week&&w.workout_sessions?.training_day_id===day.id;
       const bySess={};data.forEach(w=>{if(isCurrent(w))return;if(!bySess[w.exercise_id])bySess[w.exercise_id]=w.session_id;});
@@ -1184,8 +1331,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
         const avg=v.reduce((s,x)=>s+x.reps,0)/v.length;const mw=Math.max(...v.map(s=>s.weight_lb));
         const rirAdj=progressionFromRIR(v);
         const sets=v.map(x=>({w:x.weight_lb,r:x.reps}));const when=v[0].workout_sessions?.session_date||null;
-        if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when};
-        else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when};}
+        const stall=stallCheck(exposuresFromSets(data.filter(w=>w.exercise_id===ex.id&&!isCurrent(w))));
+        if(isDeload)prog[ex.id]={w:mw,r:avg,up:false,sw:Math.round(mw*0.6/2.5)*2.5,deload:true,rirAdj,sets,when,stall};
+        else{const hit=v.every(s=>s.reps>=ex.repMax);prog[ex.id]={w:mw,r:avg,up:hit,sw:hit?mw+ex.increment:mw,rirAdj,sets,when,stall};}
       });
       setLw(prog);cache.set(`lw_${day.id}_${week}`,prog);
     }catch{const c=cache.get(`lw_${day.id}_${week}`);if(c)setLw(c);}
@@ -1316,6 +1464,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                 {ex.tempo&&<span style={{fontSize:9,fontFamily:mono,fontWeight:700,color:ex.tempo>=3?C.gn:C.mt,background:ex.tempo>=3?`${C.gn}14`:C.sf2,padding:"2px 6px",borderRadius:4,flexShrink:0}}>{ex.tempo}s ↓</span>}
                 {!all&&!isDeload&&(rirAdj?.delta===1?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>↑ RIR</span>:rirAdj?.delta===-1?<span style={{fontSize:9,fontWeight:700,color:C.am,background:`${C.am}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>RIR hold</span>:pg?.up?<span style={{fontSize:9,fontWeight:700,color:C.gn,background:`${C.gn}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>↑ LOAD</span>:null)}
                 {pg?.deload&&<span style={{fontSize:9,fontWeight:700,color:C.am,background:`${C.am}14`,padding:"2px 6px",borderRadius:4,flexShrink:0}}>60%</span>}
+                {!all&&!pg?.deload&&pg?.stall?.stalled&&<span style={{fontSize:9,fontWeight:700,color:C.rd,background:`${C.rd}14`,padding:"2px 6px",borderRadius:4,flexShrink:0,fontFamily:mono}}>STALL</span>}
                 <span style={{color:C.mt,transform:isE?"rotate(90deg)":"none",transition:"transform 0.2s",fontSize:18,flexShrink:0,lineHeight:1}}>›</span>
               </button>
               {isE&&(
@@ -1376,7 +1525,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.mt} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                     Start rest timer ({Math.floor(restFor/60)}:{String(restFor%60).padStart(2,"0")})
                   </button>}
-                  {pg?.sets?.length>0&&!pg.deload&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,lineHeight:1.5}}>Last{pg.when?` (${pg.when.slice(5)})`:""}: <span style={{color:C.tx2}}>{pg.sets.map(x=>`${x.w}×${x.r}`).join(" · ")}</span><br/><span style={{color:pg.up?C.gn:C.ac}}>{pg.up?`Top of range hit. ${pg.sw}lb × ${ex.repMin}+ today`:"Beat it: +1 rep per set (grey numbers), same weight"}</span></div>}
+                  {pg?.sets?.length>0&&!pg.deload&&<div style={{fontSize:10,fontFamily:mono,color:C.mt,marginBottom:6,lineHeight:1.5}}>Last{pg.when?` (${pg.when.slice(5)})`:""}: <span style={{color:C.tx2}}>{pg.sets.map(x=>`${x.w}×${x.r}`).join(" · ")}</span><br/><span style={{color:pg.up?C.gn:C.ac}}>{pg.up?`Top of range hit. ${pg.sw}lb × ${ex.repMin}+ today`:"Beat it: +1 rep per set (grey numbers), same weight"}</span>{pg.stall?.stalled&&<><br/><span style={{color:C.rd}}>No progress in 3 sessions (best e1RM {Math.round(pg.stall.bestRecent)} vs {Math.round(pg.stall.bestPrior)}). {stallTip(ex.isCompound)}</span></>}{pg.stall?.rebuilding&&<><br/><span style={{color:C.am}}>Rebuilding after a break: {Math.round(pg.stall.bestRecent)} vs {Math.round(pg.stall.bestPrior)} e1RM before it. Usually back within a few sessions.</span></>}</div>}
                   <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",gap:4,marginBottom:5}}>{["Set","Weight","Reps",""].map(h=><span key={h} style={hlbl}>{h}</span>)}</div>
                   {Array.from({length:es},(_,i)=>{const sn=i+1,s=gs(ex.id,sn),ok=s.reps>0,hi=s.reps>ex.repMax,lo=s.reps>0&&s.reps<ex.repMin;
                     return(<div key={i} style={{marginBottom:6}}>
@@ -1440,11 +1589,13 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   const[calcW,setCalcW]=useState(String(latBW));const[calcH,setCalcH]=useState(String(latMeas?.height_in||71));const[calcAge,setCalcAge]=useState("30");const[calcBF,setCalcBF]=useState(String(parseFloat(latBF).toFixed(1)));const[calcAct,setCalcAct]=useState("Active");const[calcG,setCalcG]=useState(mt.goalName||savedMt?.goalName||"Maintain");const[calcP,setCalcP]=useState("1.18");const[calcF,setCalcF]=useState("0.37");const[calcRC,setCalcRC]=useState(String(mt.restCarbs||Math.max(0,mt.carbs-100)));const[useEmpirical,setUseEmpirical]=useState(true);const[empiricalMaint,setEmpiricalMaint]=useState(String(cache.get("empiricalMaint")||"3100"));const[nf,setNf]=useState({name:"",portion_size:"",portion_unit:"",protein_g:"",carbs_g:"",fat_g:"",calories:"",category:"Protein"});const[recentFoods,setRecentFoods]=useState([]);const[td]=useState(localDate());
   const[showAI,setShowAI]=useState(false);const[aiText,setAiText]=useState("");const[aiImg,setAiImg]=useState(null);const[aiImgMime,setAiImgMime]=useState("image/jpeg");const[aiLoading,setAiLoading]=useState(false);const[aiResult,setAiResult]=useState(null);const[aiError,setAiError]=useState(null);const aiFileRef=useRef(null);const[showScan,setShowScan]=useState(false);const[scanStatus,setScanStatus]=useState("Point camera at barcode");const scanRef=useRef(null);const streamRef=useRef(null);const scanLockRef=useRef(false);
   const[saveErr,setSaveErr]=useState(null);
+  const[maintEst,setMaintEst]=useState(null);
+  useEffect(()=>{if(!showCalc)return;let live=true;estimateMaintenance(meas).then(r=>{if(live)setMaintEst(r);}).catch(()=>{if(live)setMaintEst({ready:false,reason:"Offline"});});return()=>{live=false;};},[showCalc,meas]);
   const[showPlan,setShowPlan]=useState(false);
   const[plan,setPlan]=useState(null);
   const[planLoading,setPlanLoading]=useState(false);
   const[planError,setPlanError]=useState(null);
-  async function generatePlan(){setPlanLoading(true);setPlanError(null);setPlan(null);try{const res=await fetch("/api/meal-plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({foods:foods.filter(f=>f.calories>0).map(f=>({name:f.name.replace(/[^\x20-\x7E]/g,'').replace(/"/g,"'").trim(),portion_size:f.portion_size,portion_unit:f.portion_unit,protein_g:f.protein_g,carbs_g:f.carbs_g,fat_g:f.fat_g,calories:f.calories,category:f.category})),targets:{protein:activeMt.protein,carbs:activeMt.carbs,fat:activeMt.fat,calories:activeMt.calories,goal:mt.goalName||"Maintain"}})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);const slots=["breakfast","lunch","dinner","snacks"];slots.forEach(slot=>{if(!Array.isArray(data[slot]))data[slot]=[];});setPlan(data);}catch(err){setPlanError(err.message||"Failed to generate plan");}finally{setPlanLoading(false);}}
+  async function generatePlan(){setPlanLoading(true);setPlanError(null);setPlan(null);try{const res=await fetch("/api/meal-plan",{method:"POST",headers:{"Content-Type":"application/json",...(await authHeaders())},body:JSON.stringify({foods:foods.filter(f=>f.calories>0).map(f=>({name:f.name.replace(/[^\x20-\x7E]/g,'').replace(/"/g,"'").trim(),portion_size:f.portion_size,portion_unit:f.portion_unit,protein_g:f.protein_g,carbs_g:f.carbs_g,fat_g:f.fat_g,calories:f.calories,category:f.category})),targets:{protein:activeMt.protein,carbs:activeMt.carbs,fat:activeMt.fat,calories:activeMt.calories,goal:mt.goalName||"Maintain"}})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);const slots=["breakfast","lunch","dinner","snacks"];slots.forEach(slot=>{if(!Array.isArray(data[slot]))data[slot]=[];});setPlan(data);}catch(err){setPlanError(err.message||"Failed to generate plan");}finally{setPlanLoading(false);}}
   function planTotal(){if(!plan)return{protein:0,carbs:0,fat:0,calories:0};const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];return all.reduce((a,m)=>({protein:a.protein+(m.protein_g||0)*(m.portions||1),carbs:a.carbs+(m.carbs_g||0)*(m.portions||1),fat:a.fat+(m.fat_g||0)*(m.portions||1),calories:a.calories+(m.calories||0)*(m.portions||1)}),{protein:0,carbs:0,fat:0,calories:0});}
   async function logPlanToday(){if(!plan)return;const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){if(!f.id)continue;const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions||1,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions||1});if(error)throw error;}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions||1});onPC();}}setShowPlan(false);setPlan(null);}
   useEffect(()=>{loadLog();loadRecent();},[]);
@@ -1465,7 +1616,7 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   async function startScan(){scanLockRef.current=false;setShowScan(true);setShowAI(false);setAiResult(null);setScanStatus("Starting camera...");try{const ZXing=await import("https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm");const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});streamRef.current=stream;if(scanRef.current){scanRef.current.srcObject=stream;scanRef.current.play();}setScanStatus("Point camera at barcode");const reader=new ZXing.BrowserMultiFormatReader();reader.decodeFromStream(stream,scanRef.current,async(result,err)=>{if(!result||scanLockRef.current)return;scanLockRef.current=true;const barcode=result.getText();if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setScanStatus("Looking up product...");try{const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);const data=await res.json();if(data.status===1&&data.product){const p=data.product;const n=p.nutriments;const hasServingData=n.proteins_serving!=null||n["energy-kcal_serving"]!=null;const servingQty=parseFloat(p.serving_quantity)||0;const servingSize=p.serving_size||"serving";let protein,carbs,fat,calories;if(hasServingData){protein=parseFloat(n.proteins_serving||0);carbs=parseFloat(n.carbohydrates_serving||0);fat=parseFloat(n.fat_serving||0);calories=parseFloat(n["energy-kcal_serving"]||0);}else if(servingQty>0){const scale=servingQty/100;protein=parseFloat(n.proteins||0)*scale;carbs=parseFloat(n.carbohydrates||0)*scale;fat=parseFloat(n.fat||0)*scale;calories=parseFloat(n["energy-kcal"]||0)*scale;}else{protein=parseFloat(n.proteins||0);carbs=parseFloat(n.carbohydrates||0);fat=parseFloat(n.fat||0);calories=parseFloat(n["energy-kcal"]||0);}setAiResult({name:p.product_name||p.generic_name||"Scanned food",portion_size:servingQty||100,portion_unit:servingSize,protein_g:Math.round(protein*10)/10,carbs_g:Math.round(carbs*10)/10,fat_g:Math.round(fat*10)/10,calories:Math.round(calories),notes:hasServingData?"From barcode scan":servingQty>0?"Scaled to serving size":"Per 100g — check serving size"});setShowScan(false);setShowAI(true);setScanStatus("Point camera at barcode");}else{setScanStatus("Product not found — try AI Log instead");setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);}}catch{setScanStatus("Lookup failed — try AI Log instead");setTimeout(()=>{setShowScan(false);scanLockRef.current=false;},2500);}});}catch(e){setScanStatus(`Camera error: ${e.message}`);setTimeout(()=>setShowScan(false),2500);}}
   function stopScan(){scanLockRef.current=false;if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}setShowScan(false);}
   function handleAIPhoto(e){const file=e.target.files?.[0];if(!file)return;setAiImgMime(file.type||"image/jpeg");const reader=new FileReader();reader.onload=ev=>{const b64=ev.target.result.split(",")[1];setAiImg(b64);};reader.readAsDataURL(file);}
-  async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);try{const res=await fetch("/api/ai-parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:aiText||undefined,imageBase64:aiImg||undefined,mimeType:aiImgMime})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);setAiResult({...data,protein_g:parseFloat(data.protein_g)||0,carbs_g:parseFloat(data.carbs_g)||0,fat_g:parseFloat(data.fat_g)||0,calories:parseFloat(data.calories)||0,portion_size:parseFloat(data.portion_size)||1});}catch(err){setAiError(err.message||"Something went wrong");}finally{setAiLoading(false);}}
+  async function runAIParse(){if(!aiText&&!aiImg)return;setAiLoading(true);setAiError(null);setAiResult(null);try{const res=await fetch("/api/ai-parse",{method:"POST",headers:{"Content-Type":"application/json",...(await authHeaders())},body:JSON.stringify({text:aiText||undefined,imageBase64:aiImg||undefined,mimeType:aiImgMime})});const data=await res.json();if(data.error)throw new Error(data.detail?`${data.error}: ${data.detail}`:data.error);setAiResult({...data,protein_g:parseFloat(data.protein_g)||0,carbs_g:parseFloat(data.carbs_g)||0,fat_g:parseFloat(data.fat_g)||0,calories:parseFloat(data.calories)||0,portion_size:parseFloat(data.portion_size)||1});}catch(err){setAiError(err.message||"Something went wrong");}finally{setAiLoading(false);}}
   // "Log only" still needs a foods row so the meal_log entry survives reloads and other devices;
   // it is stored as category "One-off" and hidden from search and suggestions.
   async function logAIResult(saveToDb){if(!aiResult)return;{const entry={name:aiResult.name,portion_size:aiResult.portion_size,portion_unit:aiResult.portion_unit||"serving",protein_g:aiResult.protein_g,carbs_g:aiResult.carbs_g,fat_g:aiResult.fat_g,calories:aiResult.calories,category:saveToDb?"Meal":"One-off"};try{const{data,error}=await supabase.from("foods").insert(entry).select().single();if(error)throw error;if(data){if(saveToDb)setFoods(p=>[...p,data].sort((a,b)=>a.name.localeCompare(b.name)));await add(data,1);setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);return;}}catch{}}const entry={id:`t_${Date.now()}`,food:aiResult.name,portions:1,protein:aiResult.protein_g,carbs:aiResult.carbs_g,fat:aiResult.fat_g,calories:aiResult.calories,foodId:null};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});setShowAI(false);setAiText("");setAiImg(null);setAiResult(null);}
@@ -1482,6 +1633,7 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
         <div style={{padding:"7px 12px",background:`${C.gn}10`,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.mt}}>Lean mass (protein anchor)</span><span style={{fontFamily:mono,fontSize:13,fontWeight:700,color:C.gn}}>{prev.leanMass} lb</span></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}><div><div style={{...lbl2,marginBottom:4}}>Protein / lean lb</div><input type="number" value={calcP} onChange={e=>setCalcP(e.target.value)} style={{...inp,fontSize:13}}/></div><div><div style={{...lbl2,marginBottom:4}}>Fat / lean lb</div><input type="number" value={calcF} onChange={e=>setCalcF(e.target.value)} style={{...inp,fontSize:13}}/></div></div>
         <div style={{...lbl2,marginBottom:6}}>Maintenance calories</div>
+        {maintEst&&(maintEst.ready?<div style={{padding:"8px 12px",background:`${C.ac}0d`,border:`1px solid ${C.ac}33`,borderRadius:8,marginBottom:10,display:"flex",alignItems:"center",gap:10}}><div style={{flex:1}}><div style={{fontSize:13,fontFamily:mono,fontWeight:700,color:C.ac}}>{maintEst.maint} cal</div><div style={{fontSize:10,color:C.mt,marginTop:2}}>From your last 4 weeks: {maintEst.avgIn} cal/day eaten across {maintEst.days} fully logged days, weight {maintEst.rate>=0?"+":""}{maintEst.rate.toFixed(2)} lb/wk ({maintEst.weighIns} weigh-ins)</div></div><button onClick={()=>{setUseEmpirical(true);setEmpiricalMaint(String(maintEst.maint));}} style={{...btnGhost,padding:"6px 10px",fontSize:11,color:C.ac,borderColor:`${C.ac}44`,flexShrink:0}}>Use</button></div>:<div style={{fontSize:10,color:C.mt,marginBottom:10}}>Estimated maintenance from your own logs: not enough data yet. {maintEst.reason}.</div>)}
         <div style={{display:"flex",gap:6,marginBottom:10}}><button onClick={()=>setUseEmpirical(false)} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${!useEmpirical?C.ac:C.bd}`,background:!useEmpirical?`${C.ac}15`:"transparent",color:!useEmpirical?C.ac:C.mt,fontSize:11,fontWeight:!useEmpirical?600:400,cursor:"pointer"}}>Calculate (formula)</button><button onClick={()=>setUseEmpirical(true)} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${useEmpirical?C.ac:C.bd}`,background:useEmpirical?`${C.ac}15`:"transparent",color:useEmpirical?C.ac:C.mt,fontSize:11,fontWeight:useEmpirical?600:400,cursor:"pointer"}}>Real world (what I eat)</button></div>
         {useEmpirical?(<div style={{marginBottom:12}}><div style={{...lbl2,marginBottom:4}}>Calories currently maintaining on</div><input type="number" value={empiricalMaint} onChange={e=>setEmpiricalMaint(e.target.value)} style={{...inp,fontSize:16}}/><div style={{fontSize:10,color:C.mt,marginTop:5}}>Based on your actual weight trend — more accurate than any formula</div></div>):(<div style={{marginBottom:12}}><div style={{...lbl2,marginBottom:6}}>Activity level</div><div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{ACTIVITY.map(a=><button key={a.name} onClick={()=>setCalcAct(a.name)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${calcAct===a.name?C.ac:C.bd}`,background:calcAct===a.name?`${C.ac}15`:"transparent",color:calcAct===a.name?C.ac:C.mt,fontSize:11,fontWeight:calcAct===a.name?600:400,cursor:"pointer"}}>{a.name}<span style={{fontSize:9,color:C.mt,display:"block"}}>{a.label}</span></button>)}</div></div>)}
         <div style={{padding:"8px 12px",background:C.sf2,borderRadius:8,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:11,color:C.mt}}>{useEmpirical?"Your maintenance":"Calculated TDEE"}</span><span style={{fontFamily:mono,fontSize:14,fontWeight:700,color:C.tx}}>{prev.tdee} cal</span></div>
@@ -1559,7 +1711,8 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   );
 }
 
-function Body({meas,onAdd,online,onPC}){
+function Body({mt,meas,onAdd,online,onPC}){
+  const wt=useMemo(()=>weightTrend(meas),[meas]);
   const[showF,setShowF]=useState(false);
   const fields=[{k:"measure_date",l:"Date",t:"date"},{k:"bodyweight_lb",l:"Weight (lb)",t:"number"},{k:"chest_in",l:"Chest",t:"number"},{k:"waist_in",l:"Waist *",t:"number"},{k:"hips_in",l:"Hips",t:"number"},{k:"r_arm_in",l:"R Arm",t:"number"},{k:"l_arm_in",l:"L Arm",t:"number"},{k:"r_forearm_in",l:"R Forearm",t:"number"},{k:"l_forearm_in",l:"L Forearm",t:"number"},{k:"shoulder_circ_in",l:"Shoulders",t:"number"},{k:"thigh_in",l:"Thigh",t:"number"},{k:"calf_in",l:"Calf",t:"number"},{k:"neck_in",l:"Neck *",t:"number"}];
   const init={};fields.forEach(f=>init[f.k]=f.k==="measure_date"?localDate():"");
@@ -1573,6 +1726,7 @@ function Body({meas,onAdd,online,onPC}){
   return(
     <div style={{padding:"20px 16px"}}>
       <div style={{fontSize:20,fontWeight:700,marginBottom:16}}>Body</div>
+      <WeightTrendCard wt={wt} goal={mt?.goalName||"Maintain"}/>
       {lat&&(<div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
           <div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"16px 14px"}}><div style={{...lbl,marginBottom:6}}>Bodyweight</div><div style={{fontSize:28,fontWeight:800,fontFamily:mono,lineHeight:1}}>{lat.bodyweight_lb??<span style={{color:C.mt}}>—</span>}</div><div style={{fontSize:11,color:C.mt,marginTop:4}}>lb{wtDelta&&<span style={{color:parseFloat(wtDelta)>0?C.am:C.gn,marginLeft:5}}>{wtDelta}</span>}</div></div>
@@ -1591,6 +1745,36 @@ function Body({meas,onAdd,online,onPC}){
       {showF&&(<div style={{...card,marginBottom:12}}><div style={{fontSize:10,color:C.mt,marginBottom:10}}>BF% auto-calculates from waist + neck</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{fields.map(f=>(<div key={f.k}><label style={{fontSize:8,color:f.k==="waist_in"||f.k==="neck_in"?C.ac:C.mt,textTransform:"uppercase",letterSpacing:"0.06em"}}>{f.l}</label><input type={f.t} inputMode={f.t==="number"?"decimal":undefined} value={fm[f.k]} onChange={e=>setFm(p=>({...p,[f.k]:e.target.value}))} style={{...inp,marginTop:3,fontSize:13}}/></div>))}</div>{fm.waist_in&&fm.neck_in&&<div style={{marginTop:10,padding:"6px 10px",background:`${C.ac}08`,borderRadius:6,fontSize:12,color:C.ac,textAlign:"center"}}>Est. BF: {navyBF(parseFloat(fm.waist_in),parseFloat(fm.neck_in),meas[meas.length-1]?.height_in||70)||"—"}%</div>}<button onClick={save} style={{...btnP,marginTop:12}}>Save</button></div>)}
       <div style={{...lbl,marginBottom:8}}>History</div>
       {[...meas].reverse().map(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return(<div key={m.id} style={{background:C.sf,borderRadius:10,border:`1px solid ${C.bd}`,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:10,color:C.mt}}>{m.measure_date}</div><div style={{fontSize:16,fontWeight:700,fontFamily:mono}}>{m.bodyweight_lb} lb</div></div><div style={{fontSize:10,color:C.mt,fontFamily:mono,textAlign:"right"}}>{bf&&<div style={{color:C.ac,marginBottom:2}}>BF {bf}%</div>}<div>{m.chest_in?`Ch ${m.chest_in}″`:""}{m.r_arm_in?` · A ${m.r_arm_in}″`:""}</div></div></div>);})}
+    </div>
+  );
+}
+
+function WeightTrendCard({wt,goal}){
+  if(!wt)return<div style={{...card,marginBottom:12,fontSize:12,color:C.mt}}>Log your weight each morning on the Train tab. A trend appears after a few days.</div>;
+  const recent=wt.series.filter(p=>wt.series[wt.series.length-1].t-p.t<=60);
+  const adv=rateAdvice(wt.rate,wt.trend,goal);
+  const W=400,H=110,ys=recent.flatMap(p=>[p.w,p.trend]);const minY=Math.min(...ys)-0.5,maxY=Math.max(...ys)+0.5;const t0=recent[0].t,t1=Math.max(recent[recent.length-1].t,t0+1);
+  const px=t=>12+(t-t0)/(t1-t0)*(W-24),py=v=>H-14-(v-minY)/(maxY-minY||1)*(H-28);
+  const stale=wt.daysSinceLast>3;
+  return(
+    <div style={{...card,marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+        <span style={{...lbl,color:C.ac}}>Weight trend</span>
+        <span style={{fontSize:10,color:C.mt,fontFamily:mono}}>goal: {goal}</span>
+      </div>
+      <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:4}}>
+        <span style={{fontSize:24,fontWeight:800,fontFamily:mono}}>{wt.trend}<span style={{fontSize:11,color:C.mt,fontWeight:400}}> lb</span></span>
+        {wt.rate!=null?<span style={{fontSize:13,fontFamily:mono,color:adv?.ok?C.gn:C.am}}>{wt.rate>=0?"+":""}{wt.rate.toFixed(2)} lb/wk</span>:<span style={{fontSize:11,color:C.mt}}>rate needs 5 weigh-ins over 10+ days</span>}
+      </div>
+      {adv&&<div style={{fontSize:11,color:adv.ok?C.gn:C.am,marginBottom:6}}>{adv.text} <span style={{color:C.mt}}>(target {adv.lo>=0?"+":""}{adv.lo.toFixed(1)} to {adv.hi>=0?"+":""}{adv.hi.toFixed(1)} lb/wk)</span></div>}
+      {stale&&<div style={{fontSize:11,color:C.am,marginBottom:6}}>Last weigh-in {wt.daysSinceLast} days ago. Daily weigh-ins make the trend useful.</div>}
+      {recent.length>=2&&<svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:H,display:"block"}}>
+        {recent.map(p=><circle key={p.date} cx={px(p.t)} cy={py(p.w)} r="2.5" fill={C.mt}><title>{`${p.date}: ${p.w} lb (trend ${p.trend})`}</title></circle>)}
+        <polyline points={recent.map(p=>`${px(p.t)},${py(p.trend)}`).join(" ")} fill="none" stroke={C.ac} strokeWidth="2" strokeLinejoin="round"/>
+        <text x="12" y={H-2} fontSize="8" fill={C.mt} fontFamily={mono}>{recent[0].date.slice(5)}</text>
+        <text x={W-12} y={H-2} fontSize="8" fill={C.mt} fontFamily={mono} textAnchor="end">{recent[recent.length-1].date.slice(5)}</text>
+      </svg>}
+      <div style={{fontSize:9,color:C.mt,marginTop:4}}>Dots = daily weigh-ins · line = smoothed trend</div>
     </div>
   );
 }
@@ -1619,21 +1803,22 @@ function LineChart({points,color,height=90}){
 
 function Stats({meas,week,online,activeProgram}){
   const[prs,setPrs]=useState([]);const[vol,setVol]=useState({});const[muscleTrend,setMuscleTrend]=useState({});const[view,setView]=useState("prs");const[selMuscle,setSelMuscle]=useState(null);
-  const[reviewWeek,setReviewWeek]=useState(week);const[reviewData,setReviewData]=useState(null);
-  useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();getWeekReview(reviewWeek);},[week,activeProgram]);
+  const[reviewWeek,setReviewWeek]=useState(week);const[reviewData,setReviewData]=useState(null);const[stalls,setStalls]=useState(null);
+  useEffect(()=>{loadPRs();loadVol();loadMuscleTrend();getWeekReview(reviewWeek);loadStalls();},[week,activeProgram]);
+  async function loadStalls(){try{const rows=await fetchAll(()=>supabase.from("workout_sets").select("exercise_id,session_id,weight_lb,reps,exercises(name,is_compound),workout_sessions(session_date,week_type)").gt("reps",0).gt("weight_lb",0).order("id"));const by={};rows.forEach(r=>{(by[r.exercise_id]=by[r.exercise_id]||{name:r.exercises?.name,isCompound:!!r.exercises?.is_compound,rows:[]}).rows.push(r);});const today=dayNum(localDate());const out=Object.values(by).map(e=>{const exp=exposuresFromSets(e.rows);const st=stallCheck(exp);return{...e,rows:undefined,st,last:exp.length?exp[exp.length-1].date:null};}).filter(e=>e.st&&e.last&&today-dayNum(e.last)<=60);setStalls(out);cache.set("stalls",out);}catch{const c=cache.get("stalls");if(c)setStalls(c);}}
   useEffect(()=>{getWeekReview(reviewWeek);},[reviewWeek]);
   async function getWeekReview(wk){
     try{
       const{data:sessions}=await supabase.from("workout_sessions").select("id").eq("week_number",wk).eq("program_id",activeProgram);
       if(!sessions||!sessions.length){setReviewData({empty:true,week:wk});return;}
       const sessionIds=sessions.map(s=>s.id);
-      const{data:sets}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,rir,exercises(name,primary_muscle)").in("session_id",sessionIds).gt("reps",0);
+      const{data:sets}=await supabase.from("workout_sets").select("exercise_id,weight_lb,reps,rir,exercises(name,primary_muscle,secondary_muscles)").in("session_id",sessionIds).gt("reps",0);
       const sessionsCompleted=sessions.length;
       const completionPct=Math.round((sessionsCompleted/4)*100);
       const rirs=(sets||[]).filter(s=>s.rir!==null&&s.rir!==undefined).map(s=>s.rir);
       const avgRIR=rirs.length?parseFloat((rirs.reduce((a,b)=>a+b,0)/rirs.length).toFixed(1)):null;
       const volumeByMuscle={};
-      (sets||[]).forEach(s=>{const m=s.exercises?.primary_muscle;if(m)volumeByMuscle[m]=(volumeByMuscle[m]||0)+1;});
+      (sets||[]).forEach(s=>{muscleCredits(s.exercises).forEach(({m,w})=>{volumeByMuscle[m]=(volumeByMuscle[m]||0)+w;});});
       const{data:prevSessions}=await supabase.from("workout_sessions").select("id").eq("week_number",wk-1).eq("program_id",activeProgram);
       const prevIds=(prevSessions||[]).map(s=>s.id);
       let topGains=[];
@@ -1647,8 +1832,8 @@ function Stats({meas,week,online,activeProgram}){
     }catch{setReviewData(null);}
   }
   async function loadPRs(){try{const data=await fetchAll(()=>supabase.from("workout_sets").select("exercise_id,weight_lb,reps,exercises(name)").gt("reps",0).order("id"));if(data){const best={};data.forEach(s=>{const n=s.exercises?.name;if(!n||!s.weight_lb||!s.reps)return;const e1=s.weight_lb*(1+s.reps/30);if(!best[n]||e1>best[n].est1rm)best[n]={exercise:n,weight:s.weight_lb,reps:s.reps,est1rm:e1};});const p=Object.values(best).sort((a,b)=>b.est1rm-a.est1rm);setPrs(p);cache.set("prs",p);}}catch{const c=cache.get("prs");if(c)setPrs(c);}}
-  async function loadVol(){try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,reps,exercises(primary_muscle))").eq("week_number",week).eq("program_id",activeProgram);if(data){const m={};data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0&&ws.exercises?.primary_muscle){const mu=ws.exercises.primary_muscle;m[mu]=(m[mu]||0)+1;}}));setVol(m);}}catch{}}
-  async function loadMuscleTrend(){try{const data=await fetchAll(()=>supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle),workout_sessions(week_number)").gt("weight_lb",0).order("id"));if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
+  async function loadVol(){try{const{data}=await supabase.from("workout_sessions").select("id,workout_sets(exercise_id,reps,exercises(primary_muscle,secondary_muscles))").eq("week_number",week).eq("program_id",activeProgram);if(data){const m={};data.forEach(s=>s.workout_sets.forEach(ws=>{if(ws.reps>0&&ws.exercises?.primary_muscle){muscleCredits(ws.exercises).forEach(({m:mu,w})=>{m[mu]=(m[mu]||0)+w;});}}));setVol(m);}}catch{}}
+  async function loadMuscleTrend(){try{const data=await fetchAll(()=>supabase.from("workout_sets").select("weight_lb,exercises(primary_muscle,secondary_muscles),workout_sessions(week_number)").gt("weight_lb",0).order("id"));if(data){const byMuscle={};data.forEach(s=>{const muscle=s.exercises?.primary_muscle;const wk=s.workout_sessions?.week_number;if(!muscle||!wk||!s.weight_lb)return;if(!byMuscle[muscle])byMuscle[muscle]={};if(!byMuscle[muscle][wk]||s.weight_lb>byMuscle[muscle][wk])byMuscle[muscle][wk]=s.weight_lb;});const result={};Object.entries(byMuscle).forEach(([muscle,weeks])=>{const pts=Object.entries(weeks).map(([wk,w])=>({x:parseInt(wk),y:w})).sort((a,b)=>a.x-b.x);if(pts.length>=2)result[muscle]=pts;});setMuscleTrend(result);cache.set("muscleTrend",result);}}catch{const c=cache.get("muscleTrend");if(c)setMuscleTrend(c);}}
   const wd=meas.filter(m=>m.bodyweight_lb);
   const bfData=meas.filter(m=>{const bf=m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null);return bf!==null;}).map((m,i)=>{const bf=parseFloat(m.body_fat_pct||(m.waist_in&&m.neck_in&&m.height_in?navyBF(m.waist_in,m.neck_in,m.height_in):null));return{x:i+1,y:bf};});
   const bwPoints=wd.map((m,i)=>({x:i+1,y:m.bodyweight_lb,label:m.measure_date?.slice(5)}));
@@ -1682,7 +1867,7 @@ function Stats({meas,week,online,activeProgram}){
             <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:10}}>
               {Object.entries(reviewData.volumeByMuscle).sort((a,b)=>b[1]-a[1]).map(([m,sets])=>{
                 const st=volumeStatus(sets,VOL_TARGETS[m]);
-                return<span key={m} style={{fontSize:10,padding:"3px 8px",borderRadius:12,background:`${st.color}15`,color:st.color,border:`1px solid ${st.color}33`}}>{m} {sets}</span>;
+                return<span key={m} style={{fontSize:10,padding:"3px 8px",borderRadius:12,background:`${st.color}15`,color:st.color,border:`1px solid ${st.color}33`}}>{m} {fmtSets(sets)}</span>;
               })}
             </div>
           )}
@@ -1700,7 +1885,7 @@ function Stats({meas,week,online,activeProgram}){
         </div>
       )}
       <div style={{display:"flex",gap:4,marginBottom:16,background:C.sf2,borderRadius:10,padding:4}}>
-        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"bw",l:"Weight"},{id:"bf",l:"Body Fat"},{id:"muscle",l:"Muscle"}].map(v=>(
+        {[{id:"prs",l:"PRs"},{id:"vol",l:`Vol W${week}`},{id:"stall",l:"Stalls"},{id:"bw",l:"Weight"},{id:"bf",l:"BF"},{id:"muscle",l:"Muscle"}].map(v=>(
           <button key={v.id} onClick={()=>setView(v.id)} style={{flex:1,padding:"7px 0",borderRadius:7,border:"none",background:view===v.id?C.sf:"transparent",color:view===v.id?C.tx:C.mt,fontSize:11,fontWeight:view===v.id?600:400,cursor:"pointer",transition:"background 0.15s"}}>{v.l}</button>
         ))}
       </div>
@@ -1731,9 +1916,9 @@ function Stats({meas,week,online,activeProgram}){
                       <span style={{fontSize:12,color:C.tx}}>{muscle}</span>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontSize:11,fontFamily:mono,color:C.mt}}>{actual}/{mrv||"?"}</span>
+                      <span style={{fontSize:11,fontFamily:mono,color:C.mt}}>{fmtSets(actual)}/{mrv||"?"}</span>
                       <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",color:st.color}}>
-                        {st.label}{st.label==="JUNK"&&st.delta!=null?` +${st.delta}`:st.label==="UNDER"&&st.delta!=null?` -${st.delta}`:""}
+                        {st.label}{st.label==="JUNK"&&st.delta!=null?` +${fmtSets(st.delta)}`:st.label==="UNDER"&&st.delta!=null?` -${fmtSets(st.delta)}`:""}
                       </span>
                     </div>
                   </div>
@@ -1754,6 +1939,19 @@ function Stats({meas,week,online,activeProgram}){
             </div>
           </div>
         );
+      })()}
+      {view==="stall"&&(()=>{
+        if(!stalls)return<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Loading...</div>;
+        const st=stalls.filter(e=>e.st.stalled),rb=stalls.filter(e=>e.st.rebuilding),ok=stalls.filter(e=>!e.st.stalled&&!e.st.rebuilding);
+        const Row=({e,c})=><div style={{padding:"9px 0",borderBottom:`1px solid ${C.bd}`}}><div style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{fontSize:12,color:C.tx,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name}</span><span style={{fontSize:11,fontFamily:mono,color:c,flexShrink:0}}>{Math.round(e.st.bestRecent)} / {Math.round(e.st.bestPrior)}</span></div>{c===C.rd&&<div style={{fontSize:10,color:C.mt,marginTop:3}}>{stallTip(e.isCompound)}</div>}</div>;
+        return(<div>
+          <div style={{fontSize:11,color:C.mt,marginBottom:12,lineHeight:1.5}}>Lifts trained in the last 60 days with 4+ sessions. Numbers are best e1RM in the last 3 sessions vs best before that.</div>
+          <div style={{...lbl,color:C.rd,marginBottom:4}}>Stalled ({st.length})</div>
+          {st.length?st.map(e=><Row key={e.name} e={e} c={C.rd}/>):<div style={{fontSize:12,color:C.mt,padding:"6px 0 12px"}}>None. Everything you're training is moving.</div>}
+          {rb.length>0&&<><div style={{...lbl,color:C.am,margin:"14px 0 4px"}}>Rebuilding after a break ({rb.length})</div>{rb.map(e=><Row key={e.name} e={e} c={C.am}/>)}</>}
+          <div style={{...lbl,color:C.gn,margin:"14px 0 4px"}}>Progressing ({ok.length})</div>
+          {ok.map(e=><Row key={e.name} e={e} c={C.gn}/>)}
+        </div>);
       })()}
       {view==="bw"&&(bwPoints.length>=2?(<div><div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}><div style={lbl}>Bodyweight trend</div><div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bwPoints[0].y} → <span style={{color:C.ac,fontWeight:600}}>{bwPoints[bwPoints.length-1].y} lb</span></div></div><div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.bd}`,padding:"14px 10px 6px"}}><LineChart points={bwPoints} color={C.ac} height={100}/></div></div>):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet</div>)}
       {view==="bf"&&(bfData.length>=2?(<div><div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}><div style={lbl}>Body fat trend</div><div style={{fontFamily:mono,fontSize:11,color:C.mt}}>{bfData[0].y}% → <span style={{color:C.am,fontWeight:600}}>{bfData[bfData.length-1].y}%</span></div></div><div style={{background:C.sf,borderRadius:12,border:`1px solid ${C.am}22`,padding:"14px 10px 6px"}}><LineChart points={bfData} color={C.am} height={100}/></div></div>):<div style={{textAlign:"center",padding:"36px 20px",color:C.mt,fontSize:13}}>Not enough data yet — log waist + neck measurements in Body tab</div>)}
