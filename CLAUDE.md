@@ -16,7 +16,7 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- React (single-file architecture — everything lives in src/App.jsx)
 
-\- Supabase (database + email/password auth, project ID: qijapjafswogmjxxsbhw). `Root` in App.jsx gates the app on a session. RLS policy `app_user_all` lets `authenticated` users in `private.app_users` (allowlist by email, checked by `private.is_app_user()`) read/write every table. Add a person: `insert into private.app_users(email) values ('...')`. The `/api` functions require the user's Supabase token (`requireAppUser`).
+\- Supabase (database + email/password auth, project ID: qijapjafswogmjxxsbhw). `Root` in App.jsx gates the app on a session. RLS policy `app_user_all` lets `authenticated` users in `private.app_users` (allowlist by email, checked by `private.is_app_user()`) read/write every table. Add a person: `insert into private.app_users(email) values ('...')`. Personal tables (`workout_sessions`, `workout_sets`, `session_readiness`, `meal_log`, `measurements`, `macro_targets`) have `user_id uuid default auth.uid()` and policy `own_rows` (each user sees only their own rows); everything else (programs, exercises, foods, skills, cali) is shared via `app_user_all`. Inserts don't need to set `user_id`. The `/api` functions require the user's Supabase token (`requireAppUser`).
 
 \- Vercel (auto-deploys from GitHub on push to main)
 
