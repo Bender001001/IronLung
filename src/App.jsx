@@ -152,13 +152,24 @@ function buildLast(exercises,data,{week,dayId,isDeload}){
   });
   return prog;
 }
+// Keep the offline snapshot current with sets logged in this app session (online or not),
+// and record the latest training date+week so the week number can advance offline.
+function rememberSet(row,programId){
+  try{
+    if(!(row.weight_lb>0)||!(row.reps>0))return;
+    const rows=(cache.get("last_sets")||[]).filter(r=>!(r.session_id===row.session_id&&r.exercise_id===row.exercise_id&&r.set_number===row.set_number));
+    rows.unshift(row);cache.set("last_sets",rows.slice(0,1500));
+    const k=`last_train_${programId}`;const lt=cache.get(k);const ws=row.workout_sessions;
+    if(!lt||ws.session_date>lt.date||(ws.session_date===lt.date&&ws.week_number>lt.week))cache.set(k,{week:ws.week_number,date:ws.session_date});
+  }catch{}
+}
 // Saved on every online launch so any training day can show last-time numbers offline,
 // even one you haven't opened yet this week.
 async function warmLastSets(days){
   try{
     const ids=[...new Set(days.flatMap(d=>d.exercises.map(e=>e.id)))];if(!ids.length)return;
     const{data,error}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",ids).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(1000);
-    if(!error&&data)cache.set("last_sets",data);
+    if(!error&&data){const unsynced=new Set(getPending().filter(o=>o.type==="upsert_set").map(o=>String(o.sessionId)));const local=(cache.get("last_sets")||[]).filter(r=>String(r.session_id).startsWith("temp_")&&unsynced.has(String(r.session_id)));cache.set("last_sets",[...local,...data]);}
   }catch{}
 }
 
@@ -646,6 +657,13 @@ async function exportCSV(kind){
 // private.app_users (see migration auth_allowlist_and_authenticated_policies).
 // The session is kept in localStorage by supabase-js, so this works offline once signed in.
 
+// Offline-first startup. With no signal, supabase-js keeps retrying an expired token
+// refresh for up to ~30s and every query waits on it. Reads race a short timeout and
+// fall back to the local cache, and the stored session is trusted until the server
+// actually says it's gone.
+function net(p,ms=6000){if(navigator.onLine===false)return Promise.reject(new Error("offline"));return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("network timeout")),ms))]);}
+function storedSession(){try{const raw=localStorage.getItem("sb-qijapjafswogmjxxsbhw-auth-token");if(!raw)return null;const v=JSON.parse(raw);return v?.user?v:null;}catch{return null;}}
+
 async function authHeaders(){try{const{data}=await supabase.auth.getSession();const t=data?.session?.access_token;return t?{Authorization:`Bearer ${t}`}:{};}catch{return{};}}
 async function signOut(){try{await supabase.auth.signOut();}catch{}Object.keys(localStorage).filter(k=>k.startsWith("il_")).forEach(k=>localStorage.removeItem(k));try{navigator.serviceWorker?.controller?.postMessage("clear-caches");if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch{}}
 
@@ -694,10 +712,13 @@ function NoAccess({email}){
 }
 
 export default function Root(){
-  const[session,setSession]=useState(undefined);
+  const[session,setSession]=useState(()=>storedSession()||undefined);
   const[access,setAccess]=useState("checking");
   useEffect(()=>{
-    supabase.auth.getSession().then(({data})=>setSession(data?.session||null)).catch(()=>setSession(null));
+    // Ask the browser not to evict offline data under storage pressure (Android/Chrome honor this; iOS keeps home-screen app data while you use it).
+    try{navigator.storage?.persist?.();}catch{}
+    // A failed refresh (no signal) keeps the stored session; a rejected token is removed from storage by supabase-js, so this falls through to Login.
+    supabase.auth.getSession().then(({data,error})=>setSession(data?.session||(error?storedSession():null))).catch(()=>setSession(storedSession()));
     const{data:sub}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s||null));
     return()=>sub?.subscription?.unsubscribe();
   },[]);
@@ -705,12 +726,11 @@ export default function Root(){
   useEffect(()=>{
     if(!uid){setAccess("checking");return;}
     let live=true;
-    (async()=>{try{const{data,error}=await supabase.from("programs").select("id").limit(1);if(!live)return;if(error){setAccess("ok");return;}setAccess(data&&data.length?"ok":"denied");}catch{if(live)setAccess("ok");}})();
+    (async()=>{try{const{data,error}=await net(supabase.from("programs").select("id").limit(1),8000);if(!live)return;if(error){setAccess("ok");return;}setAccess(data&&data.length?"ok":"denied");}catch{if(live)setAccess("ok");}})();
     return()=>{live=false;};
   },[uid]);
   if(session===undefined)return<Splash/>;
   if(!session)return<Login/>;
-  if(access==="checking")return<Splash/>;
   if(access==="denied")return<NoAccess email={session.user?.email}/>;
   return<App key={uid} userEmail={session.user?.email}/>;
 }
@@ -745,26 +765,33 @@ function App({userEmail}){
   // inflate it, and a finished week can't be reopened by accident. Arrows still override.
   async function syncWeek(){
     try{
-      const{data}=await supabase.from("workout_sessions").select("week_number,session_date,workout_sets(count)").eq("program_id",activeProgram).order("session_date",{ascending:false}).order("id",{ascending:false}).limit(15);
+      const{data,error}=await net(supabase.from("workout_sessions").select("week_number,session_date,workout_sets(count)").eq("program_id",activeProgram).order("session_date",{ascending:false}).order("id",{ascending:false}).limit(15));
+      if(error)throw error;
       const last=(data||[]).find(s=>(s.workout_sets?.[0]?.count||0)>0);
-      if(!last){if(Array.isArray(data)){setWeek(1);cache.set("week",1);}return;}
-      const wk=mondayKey(localDate())>mondayKey(last.session_date)?last.week_number+1:last.week_number;
-      setWeek(wk);cache.set("week",wk);
-    }catch{}
+      if(!last){const lt=cache.get(`last_train_${activeProgram}`);if(lt)return applyWeek(lt);setWeek(1);cache.set("week",1);return;}
+      const lt=cache.get(`last_train_${activeProgram}`);
+      // A session logged offline and not synced yet can be newer than the server's latest.
+      applyWeek(lt&&lt.date>last.session_date?lt:{week:last.week_number,date:last.session_date});
+    }catch{const lt=cache.get(`last_train_${activeProgram}`);if(lt)applyWeek(lt);}
+  }
+  function applyWeek(lt){
+    cache.set(`last_train_${activeProgram}`,lt);
+    const wk=mondayKey(localDate())>mondayKey(lt.date)?lt.week+1:lt.week;
+    setWeek(wk);cache.set("week",wk);
   }
 
   async function load(){
     setLoading(true);
     try{
-      const{data:d,error:dE}=await supabase.from("training_days").select("*,training_day_exercises(*,exercises(*))").eq("program_id",activeProgram).order("day_order");
+      const{data:d,error:dE}=await net(supabase.from("training_days").select("*,training_day_exercises(*,exercises(*))").eq("program_id",activeProgram).order("day_order"));
       if(dE)throw dE;
       if(d){
         const f=d.map(x=>({id:x.id,name:x.name,focus:x.focus,exercises:(x.training_day_exercises||[]).sort((a,b)=>a.exercise_order-b.exercise_order).map(t=>toEx(t.exercises,t.default_sets))}));
         setDays(f);cache.set(`days_${activeProgram}`,f);warmLastSets(f);
       }
-      const{data:fd}=await supabase.from("foods").select("*").order("name");if(fd){setFoods(fd);cache.set("foods",fd);}
-      const{data:tg}=await supabase.from("macro_targets").select("*").eq("is_active",true).limit(1);if(tg?.[0]){const goalName=tg[0].goal_name;const t={protein:tg[0].protein_g_target,carbs:tg[0].carbs_g_target,fat:tg[0].fat_g_target,calories:tg[0].calories_target,goalName,bw:tg[0].bodyweight_lb,restCarbs:tg[0].rest_carbs_g||Math.max(0,tg[0].carbs_g_target-100),restCalories:tg[0].rest_calories||Math.max(1500,tg[0].calories_target-400)};setMt(t);cache.set("mt",t);}else if(Array.isArray(tg)){setMt(p=>({...p,goalName:undefined,noTargets:true}));}
-      const{data:ms}=await supabase.from("measurements").select("*").order("measure_date");if(ms){setMeas(ms);cache.set("meas",ms);}
+      const{data:fd}=await net(supabase.from("foods").select("*").order("name"));if(fd){setFoods(fd);cache.set("foods",fd);}
+      const{data:tg}=await net(supabase.from("macro_targets").select("*").eq("is_active",true).limit(1));if(tg?.[0]){const goalName=tg[0].goal_name;const t={protein:tg[0].protein_g_target,carbs:tg[0].carbs_g_target,fat:tg[0].fat_g_target,calories:tg[0].calories_target,goalName,bw:tg[0].bodyweight_lb,restCarbs:tg[0].rest_carbs_g||Math.max(0,tg[0].carbs_g_target-100),restCalories:tg[0].rest_calories||Math.max(1500,tg[0].calories_target-400)};setMt(t);cache.set("mt",t);}else if(Array.isArray(tg)){setMt(p=>({...p,goalName:undefined,noTargets:true}));}
+      const{data:ms}=await net(supabase.from("measurements").select("*").order("measure_date"));if(ms){setMeas(ms);cache.set("meas",ms);}
     }catch{
       setDays(cache.get(`days_${activeProgram}`)||[]);setFoods(cache.get("foods")||[]);const cm=cache.get("mt");if(cm)setMt(cm);setMeas(cache.get("meas")||[]);
     }
@@ -791,7 +818,7 @@ function App({userEmail}){
         <div style={{padding:"16px 16px 0"}} onClick={()=>setTab("body")}>
           <div style={{background:`${C.am}14`,border:`1px solid ${C.am}33`,borderRadius:10,padding:"12px 14px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,cursor:"pointer"}}>
             <div>
-              <div style={{fontSize:12,fontWeight:600,color:C.am}}>Biweekly check-in due — last log {daysSinceLastMeasurement(meas)} days ago</div>
+              <div style={{fontSize:12,fontWeight:600,color:C.am}}>{meas.length?`Biweekly check-in due — last log ${daysSinceLastMeasurement(meas)} days ago`:"Log your first bodyweight check-in"}</div>
               <div style={{fontSize:10,color:C.mt,marginTop:2}}>Tap to log</div>
             </div>
             <button onClick={e=>{e.stopPropagation();const v=new Date().toISOString();cache.set("dismissed_measurement_nudge",v);setMeasNudgeDismissed(true);}} style={{background:"none",border:"none",color:C.mt,fontSize:16,cursor:"pointer",padding:4,flexShrink:0,lineHeight:1}}>×</button>
@@ -1435,7 +1462,7 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     const exerciseIds=day.exercises.map(e=>e.id);if(!exerciseIds.length)return;
     const apply=rows=>{const prog=buildLast(day.exercises,rows,{week,dayId:day.id,isDeload});setLw(prog);return prog;};
     try{
-      const{data,error}=await supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(800);if(error)throw error;
+      const{data,error}=await net(supabase.from("workout_sets").select("session_id,exercise_id,set_number,weight_lb,reps,rir,created_at,workout_sessions(week_number,training_day_id,session_date,week_type)").in("exercise_id",exerciseIds).gt("weight_lb",0).gt("reps",0).order("created_at",{ascending:false}).limit(800));if(error)throw error;
       if(!data)return;
       cache.set(`lw_${day.id}_${week}`,apply(data));
     }catch{
@@ -1453,9 +1480,9 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   async function init(){
     const ck=`session_${day.id}_${week}_${activeProgram}`;
     try{
-      const{data,error:se}=await supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1);if(se)throw se;
+      const{data,error:se}=await net(supabase.from("workout_sessions").select("id,notes,workout_sets(*)").eq("week_number",week).eq("training_day_id",day.id).eq("program_id",activeProgram).limit(1));if(se)throw se;
       if(data?.[0]){setSid(data[0].id);setNotes(data[0].notes||"");{const ts=(data[0].workout_sets||[]).filter(w=>w.reps>0&&w.created_at).map(w=>new Date(w.created_at).getTime());if(ts.length)setSpan({start:Math.min(...ts),end:Math.max(...ts)});}const l={};data[0].workout_sets.forEach(w=>{l[`${w.exercise_id}-${w.set_number}`]={weight:w.weight_lb||0,reps:w.reps||0,rir:w.rir??null,mmc:w.mmc??null,dbId:w.id};});setSd(l);cache.set(ck,{sid:data[0].id,sets:l});}
-      else{const{data:n,error:ne}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(ne)throw ne;if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
+      else{if(navigator.onLine===false)throw new Error("offline");const{data:n,error:ne}=await supabase.from("workout_sessions").insert({week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram,mesocycle_block:Math.ceil(week/4),mesocycle_phase:weekType==="Deload"?"DELOAD":(((week-1)%4)+1===1?"MEV":((week-1)%4)+1===2?"MAV":((week-1)%4)+1===3?"MRV":"DELOAD")}).select().single();if(ne)throw ne;if(n){setSid(n.id);cache.set(ck,{sid:n.id,sets:{}});}}
     }catch{const c=cache.get(ck);if(c){setSid(c.sid);setSd(c.sets||{});}else{const tid=`temp_${Date.now()}`;setSid(tid);cache.set(ck,{sid:tid,sets:{}});addPending({type:"create_session",tempId:tid,data:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType,program_id:activeProgram}});onPC();}}
   }
 
@@ -1469,8 +1496,8 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
     saveTimer.current[k]=setTimeout(()=>sv(eid,sn),800);
   }
 
-  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};const wasDone=(cached.sets[k]?.reps||0)>0;if(!wasDone&&d.reps>0){startTimer();setSpan(p=>({start:p?.start||Date.now(),end:Date.now()}));}else if(d.reps>0)setSpan(p=>p?{...p,end:Date.now()}:{start:Date.now(),end:Date.now()});cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
-    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{let savedRowId=d.dbId;if(d.dbId){const{error:ue}=await supabase.from("workout_sets").update(payload).eq("id",d.dbId);if(ue)throw ue;}else{const{data:ins,error:ie}=await supabase.from("workout_sets").upsert({session_id:sid,exercise_id:eid,set_number:sn,...payload},{onConflict:"session_id,exercise_id,set_number"}).select().single();if(ie)throw ie;if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
+  async function sv(eid,sn,overrides={}){if(!sid)return;const k=`${eid}-${sn}`,d={...sdRef.current[k],...overrides};if(!d||(!d.weight&&!d.reps))return;const ck=`session_${day.id}_${week}_${activeProgram}`;const cached=cache.get(ck)||{sid,sets:{}};cached.sets=cached.sets||{};const wasDone=(cached.sets[k]?.reps||0)>0;if(d.reps>0)rememberSet({session_id:sid,exercise_id:eid,set_number:sn,weight_lb:d.weight,reps:d.reps,rir:d.rir??null,workout_sessions:{week_number:week,training_day_id:day.id,session_date:localDate(),week_type:weekType}},activeProgram);if(!wasDone&&d.reps>0){startTimer();setSpan(p=>({start:p?.start||Date.now(),end:Date.now()}));}else if(d.reps>0)setSpan(p=>p?{...p,end:Date.now()}:{start:Date.now(),end:Date.now()});cached.sets[k]={weight:d.weight,reps:d.reps,rir:d.rir,mmc:d.mmc,dbId:d.dbId};cache.set(ck,cached);const queue=()=>{addPendingSet({type:"upsert_set",dbId:d.dbId,sessionId:sid,exerciseId:eid,setNumber:sn,weight:d.weight,reps:d.reps,rir:d.rir??null,mmc:d.mmc??null});onPC();};if(String(sid).startsWith("temp_")){queue();setSaved(new Date().toLocaleTimeString());return;}
+    const payload={weight_lb:d.weight,reps:d.reps};if(d.rir!=null)payload.rir=d.rir;if(d.mmc!=null)payload.mmc=d.mmc;try{if(navigator.onLine===false)throw new Error("offline");let savedRowId=d.dbId;if(d.dbId){const{error:ue}=await supabase.from("workout_sets").update(payload).eq("id",d.dbId);if(ue)throw ue;}else{const{data:ins,error:ie}=await supabase.from("workout_sets").upsert({session_id:sid,exercise_id:eid,set_number:sn,...payload},{onConflict:"session_id,exercise_id,set_number"}).select().single();if(ie)throw ie;if(ins){savedRowId=ins.id;setSd(p=>({...p,[k]:{...p[k],dbId:ins.id}}));cached.sets[k].dbId=ins.id;cache.set(ck,cached);}}
       if(savedRowId&&d.weight>0&&d.reps>0&&weekType!=="Deload"){
         const currE1=epley1RM(d.weight,d.reps);
         const{data:prior}=await supabase.from("workout_sets").select("weight_lb,reps,exercises(name)").eq("exercise_id",eid).neq("id",savedRowId).gt("weight_lb",0).gt("reps",0);
@@ -1709,8 +1736,8 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
   function planTotal(){if(!plan)return{protein:0,carbs:0,fat:0,calories:0};const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];return all.reduce((a,m)=>({protein:a.protein+(m.protein_g||0)*(m.portions||1),carbs:a.carbs+(m.carbs_g||0)*(m.portions||1),fat:a.fat+(m.fat_g||0)*(m.portions||1),calories:a.calories+(m.calories||0)*(m.portions||1)}),{protein:0,carbs:0,fat:0,calories:0});}
   async function logPlanToday(){if(!plan)return;const all=[...plan.breakfast,...plan.lunch,...plan.dinner,...plan.snacks];for(const f of all){if(!f.id)continue;const entry={id:`t_${Date.now()}_${f.id}`,food:f.name,portions:f.portions||1,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions:f.portions||1});if(error)throw error;}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions:f.portions||1});onPC();}}setShowPlan(false);setPlan(null);}
   useEffect(()=>{loadLog();loadRecent();},[]);
-  async function loadLog(){try{const{data,error}=await supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at");if(error)throw error;if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
-  async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data,error}=await supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20);if(error)throw error;if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
+  async function loadLog(){try{const{data,error}=await net(supabase.from("meal_log").select("*,foods(*)").eq("log_date",td).order("created_at"));if(error)throw error;if(data){const l=data.map(m=>({id:m.id,food:m.foods?.name||"?",portions:parseFloat(m.portions),protein:m.foods?.protein_g||0,carbs:m.foods?.carbs_g||0,fat:m.foods?.fat_g||0,calories:m.foods?.calories||0,foodId:m.food_id}));setLog(l);cache.set(`meals_${td}`,l);}}catch{const c=cache.get(`meals_${td}`);if(c)setLog(c);}}
+  async function loadRecent(){try{const y=new Date();y.setDate(y.getDate()-1);const yesterday=`${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;const{data,error}=await net(supabase.from("meal_log").select("food_id,portions,foods(*)").gte("log_date",yesterday).order("created_at",{ascending:false}).limit(20));if(error)throw error;if(data){const seen=new Set();const unique=[];data.forEach(m=>{if(m.foods&&!seen.has(m.food_id)){seen.add(m.food_id);unique.push({...m.foods,lastPortions:parseFloat(m.portions)});}});setRecentFoods(unique);cache.set("recent_foods",unique);}}catch{const c=cache.get("recent_foods");if(c)setRecentFoods(c);}}
   async function add(f,portions=1){const entry={id:`t_${Date.now()}`,food:f.name,portions,protein:f.protein_g,carbs:f.carbs_g,fat:f.fat_g,calories:f.calories,foodId:f.id};setLog(p=>{const n=[...p,entry];cache.set(`meals_${td}`,n);return n;});try{const{data:ins,error}=await supabase.from("meal_log").insert({log_date:td,food_id:f.id,portions}).select().single();if(error)throw error;if(ins)setLog(p=>p.map(m=>m.id===entry.id?{...m,id:ins.id}:m));}catch{addPending({type:"insert_meal",date:td,foodId:f.id,portions});onPC();}setShowS(false);setShowRecent(false);setSearch("");}
   async function rm(i){const e=log[i];setLog(p=>{const n=p.filter((_,x)=>x!==i);cache.set(`meals_${td}`,n);return n;});if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").delete().eq("id",e.id);if(error)throw error;}catch{addPending({type:"delete_meal",id:e.id});onPC();}}}
   async function up(i,pt){const np=Math.max(0.25,pt);setLog(p=>{const n=p.map((m,x)=>x===i?{...m,portions:np}:m);cache.set(`meals_${td}`,n);return n;});const e=log[i];if(e?.id&&!String(e.id).startsWith("t")){try{const{error}=await supabase.from("meal_log").update({portions:np}).eq("id",e.id);if(error)throw error;}catch{addPending({type:"update_portions",id:e.id,portions:np});onPC();}}}

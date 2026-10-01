@@ -4,10 +4,10 @@
 // - Hashed build assets (/assets/*) are immutable: cache-first.
 // - The app shell (navigations, index.html) is network-first with a cached fallback so
 //   new deploys show up immediately but the app still opens offline.
-const CACHE = 'ironlog-v7';
+const CACHE = 'ironlog-v8';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/index.html'])).catch(() => {}));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/apple-touch-icon.png'])).catch(() => {}));
   self.skipWaiting();
 });
 
