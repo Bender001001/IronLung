@@ -96,6 +96,12 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Bodyweight: one `measurements` row per day for weigh-ins; trend = 10%/day EWMA, rate = 21-day regression (`weightTrend`); maintenance estimate = avg fully-logged intake minus slope x 3,500 (`estimateMaintenance`)
 
+\- Service worker (public/sw.js) never caches Supabase or /api responses (private per-user data); hashed /assets are cache-first, the app shell network-first. Bump CACHE when changing it. Sign-out clears caches and il_* localStorage
+
+\- Progress photos: private Storage bucket `progress-photos`, files under `<user id>/...` (storage policies check the folder), rows in `public.progress_photos` (own_rows). Images are resized client-side to 1280px JPEG before upload
+
+\- Deload suggestion is driven by stalls (3+ stalled lifts, `computeStalls`), not the calendar. Priority carryover banner appears after 3+ sessions in a week when a HIGH-priority muscle is under its weekly minimum
+
 \- Multiline SQL via type action strips newlines — use clipboard or REST API
 
 \- Python3 via bash is more reliable than sed for JSX string replacements
