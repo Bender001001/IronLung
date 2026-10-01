@@ -98,7 +98,8 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Service worker (public/sw.js) never caches Supabase or /api responses (private per-user data); hashed /assets are cache-first, the app shell network-first. Bump CACHE when changing it. Sign-out clears caches and il_* localStorage. Offline data lives in the app's own il_* localStorage cache: program days, per-day sessions, foods, measurements, and `il_last_sets` (recent sets for every program exercise, refreshed on each online launch by `warmLastSets`, used by `buildLast` when offline)
 
-\- Progress photos: private Storage bucket `progress-photos`, files under `<user id>/...` (storage policies check the folder), rows in `public.progress_photos` (own_rows). Images are resized client-side to 1280px JPEG before upload
+\- Offline-first startup: `Root` trusts the stored session when a token refresh fails (no signal), and Supabase reads go through `net()` (rejects instantly when `navigator.onLine` is false, else races a timeout) so they fall back to the `il_*` cache instead of hanging on supabase-js refresh retries. Wrap new reads in `net()`; don't wrap inserts that aren't idempotent (a timed-out insert may still land), guard them with the `navigator.onLine` check instead
+- Progress photos: private Storage bucket `progress-photos`, files under `<user id>/...` (storage policies check the folder), rows in `public.progress_photos` (own_rows). Images are resized client-side to 1280px JPEG before upload
 
 \- Deload suggestion is driven by stalls (3+ stalled lifts, `computeStalls`), not the calendar. Priority carryover banner appears after 3+ sessions in a week when a HIGH-priority muscle is under its weekly minimum
 
