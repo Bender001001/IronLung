@@ -681,6 +681,7 @@ function App({userEmail}){
   const[activeProgram,setActiveProgram]=useState(()=>cache.get("activeProgram")||1);
   const[measNudgeDismissed,setMeasNudgeDismissed]=useState(()=>{const v=cache.get("dismissed_measurement_nudge");if(!v)return false;return(Date.now()-new Date(v).getTime())<7*86400000;});
   const online=useOnline();
+  const[incoming,setIncoming]=useState(()=>parseAddLink());
 
   useEffect(()=>{load();syncWeek();},[activeProgram]);
   useEffect(()=>{if(online)flushPending().then(n=>{if(n>0){setPc(getPending().length);load();}});},[online]);
@@ -752,12 +753,64 @@ function App({userEmail}){
       {tab==="stats"&&<Stats meas={meas} week={week} online={online} activeProgram={activeProgram}/>}
       {tab==="skills"&&<SkillsSection supabase={supabase}/>}
       {tab==="cali"&&<CaliWorkoutsSection supabase={supabase}/>}
+      {incoming&&<AddFromLink item={incoming} onDone={(logged)=>{clearAddLink();setIncoming(null);if(logged)setTab("fuel");}}/>}
       <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.sf,borderTop:`1px solid ${C.bd}`,display:"flex",zIndex:100,padding:"6px 0 env(safe-area-inset-bottom,4px)"}}>
         {tabs.map(t=>{const active=tab===t.id;const color=active?C.ac:C.mt;return(
           <button key={t.id} onClick={()=>{setTab(t.id);if(t.id!=="train")setSelDay(null);}} style={{flex:1,padding:"8px 0",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,minHeight:48,justifyContent:"center",position:"relative"}}>
             {active&&<div style={{position:"absolute",top:0,left:"20%",right:"20%",height:2,background:C.ac,borderRadius:"0 0 2px 2px"}}/>}
             <t.Icon c={color}/><span style={{fontSize:10,fontWeight:active?700:500,color,letterSpacing:"0.02em"}}>{t.label}</span>
           </button>);})}
+      </div>
+    </div>
+  );
+}
+
+// ── "Send to IronLog" links (FlavorFold) ─────────────────────────────────────
+// Format (per serving):  /?add=<name>&p=<protein g>&c=<carbs g>&f=<fat g>&kcal=<calories>&servings=<n>&src=flavorfold
+// Opening the link (signed in) shows a confirm sheet; confirming saves the recipe to
+// foods (reused if the same name + calories already exists) and logs it for today.
+function parseAddLink(){
+  try{
+    const q=new URLSearchParams(window.location.search);const name=(q.get("add")||"").trim().slice(0,120);if(!name)return null;
+    const num=(k,max)=>{const v=parseFloat(q.get(k));return Number.isFinite(v)&&v>=0&&v<=max?Math.round(v*10)/10:null;};
+    const item={name,protein:num("p",500),carbs:num("c",1000),fat:num("f",500),kcal:num("kcal",5000),servings:num("servings",20)||1,src:(q.get("src")||"").slice(0,30)};
+    if(item.kcal==null&&item.protein!=null&&item.carbs!=null&&item.fat!=null)item.kcal=Math.round(item.protein*4+item.carbs*4+item.fat*9);
+    return item.kcal==null?null:item;
+  }catch{return null;}
+}
+function clearAddLink(){try{const u=new URL(window.location.href);["add","p","c","f","kcal","servings","src"].forEach(k=>u.searchParams.delete(k));window.history.replaceState(null,"",u.pathname+(u.search||"")+u.hash);}catch{}}
+function AddFromLink({item,onDone}){
+  const[servings,setServings]=useState(item.servings||1);
+  const[busy,setBusy]=useState(false);const[err,setErr]=useState(null);
+  const tot=k=>Math.round((item[k]||0)*servings);
+  async function confirm(){
+    setBusy(true);setErr(null);
+    try{
+      let food=null;
+      const{data:found,error:fe}=await supabase.from("foods").select("*").eq("name",item.name).eq("calories",item.kcal).limit(1);if(fe)throw fe;
+      food=found?.[0]||null;
+      if(!food){const{data,error}=await supabase.from("foods").insert({name:item.name,portion_size:1,portion_unit:"serving",protein_g:item.protein||0,carbs_g:item.carbs||0,fat_g:item.fat||0,calories:item.kcal,category:"Meal",notes:item.src?`From ${item.src}`:null}).select().single();if(error)throw error;food=data;}
+      const{error:le}=await supabase.from("meal_log").insert({log_date:localDate(),food_id:food.id,portions:servings});if(le)throw le;
+      onDone(true);
+    }catch(e){setErr(e?.message||"Couldn't save. Check your connection and try again.");setBusy(false);}
+  }
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div style={{width:"100%",maxWidth:480,background:C.sf,borderTop:`1px solid ${C.bd2}`,borderRadius:"14px 14px 0 0",padding:"18px 16px calc(18px + env(safe-area-inset-bottom,0px))"}}>
+        <div style={{...lbl,color:C.ac,marginBottom:6}}>{item.src?`From ${item.src}`:"Add to today"}</div>
+        <div style={{fontSize:16,fontWeight:700,marginBottom:12}}>{item.name}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>
+          {[{l:"Protein",v:tot("protein"),u:"g",c:C.gn},{l:"Carbs",v:tot("carbs"),u:"g",c:C.bl},{l:"Fat",v:tot("fat"),u:"g",c:C.am},{l:"Calories",v:tot("kcal"),u:"",c:C.ac}].map(m=><div key={m.l} style={{background:C.sf2,borderRadius:8,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,fontFamily:mono,color:m.c}}>{m.v}{m.u}</div><div style={{fontSize:8,color:C.mt,marginTop:2}}>{m.l}</div></div>)}
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <span style={{fontSize:12,color:C.tx2}}>Servings</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><button onClick={()=>setServings(v=>Math.max(0.5,v-0.5))} style={tbtn}>-</button><span style={{fontFamily:mono,fontSize:14,minWidth:28,textAlign:"center"}}>{servings}</span><button onClick={()=>setServings(v=>Math.min(20,v+0.5))} style={tbtn}>+</button></div>
+        </div>
+        {err&&<div style={{padding:"8px 10px",marginBottom:10,background:`${C.rd}10`,border:`1px solid ${C.rd}33`,borderRadius:8,fontSize:11,color:C.rd}}>{err}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>onDone(false)} style={{...btnGhost,flex:1,textAlign:"center"}}>Cancel</button>
+          <button disabled={busy} onClick={confirm} style={{...btnP,flex:2,opacity:busy?0.5:1}}>{busy?"Saving...":"Log it"}</button>
+        </div>
       </div>
     </div>
   );

@@ -68,6 +68,8 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Nutrition tracking with Gemini-powered food parsing and AI meal plans
 
+\- "Send to IronLog" links (used by FlavorFold): `https://iron-lung-tawny.vercel.app/?add=<name>&p=<g>&c=<g>&f=<g>&kcal=<n>&servings=<n>&src=<app>`, macros per serving. `parseAddLink` / `AddFromLink` show a confirm sheet, reuse or create the food (category Meal), and log it for today
+
 \- Body measurement logging and progressive overload management
 
 
