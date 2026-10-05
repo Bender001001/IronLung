@@ -60,7 +60,7 @@ Ashslay also uses it for calisthenics skill tracking.
 
 \- Hit top of rep range across all sets → weight increases next session
 
-\- Active program: APEX v2 (program\_id=2, since 2026-09-30): Lower A (Mon, stays first), Upper A, Lower B, Upper B are the core 4 days; Arms \& Delts is an optional Saturday pump day (its focus starts with "Optional", which excludes it from weekly completion %). Pre-v2 layout is backed up in the `backup` schema. 2026-10-02: Upper B now leads with Low Incline DB Press (4 sets) and adds Pec Deck after the single-arm pulldown (chest 10 -> 14 weekly sets, Chest priority HIGH); Arms & Delts adds Overhead Triceps Extension (6 biceps / 6 triceps). Prior layout in `backup.training_day_exercises_2026_10_02`.
+\- Active program: APEX v2 (program\_id=2, since 2026-09-30): Lower A (Mon, stays first), Upper A, Lower B, Upper B are the core 4 days; Arms \& Delts is an optional Saturday pump day (its focus starts with "Optional", which excludes it from weekly completion %). Pre-v2 layout is backed up in the `backup` schema. 2026-10-02: Upper B now leads with Low Incline DB Press (4 sets) and adds Pec Deck after the single-arm pulldown (chest 10 -> 14 weekly sets, Chest priority HIGH); Arms & Delts adds Overhead Triceps Extension (6 biceps / 6 triceps). Prior layout in `backup.training_day_exercises_2026_10_02`. 2026-10-05: Bulgarian Split Squat (renamed "Quad Focus", id 3) moved to Lower A #2 and Leg Press to Lower B #3 (backup `backup.training_day_exercises_2026_10_05`).
 
 \- Week number is derived on load: last logged session's week, +1 once you train in a new Mon-Sun calendar week (`syncWeek`)
 
