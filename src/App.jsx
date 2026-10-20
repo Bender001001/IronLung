@@ -753,7 +753,7 @@ function App({userEmail}){
   const[activeProgram,setActiveProgram]=useState(()=>cache.get("activeProgram")||1);
   const[measNudgeDismissed,setMeasNudgeDismissed]=useState(()=>{const v=cache.get("dismissed_measurement_nudge");if(!v)return false;return(Date.now()-new Date(v).getTime())<7*86400000;});
   const online=useOnline();
-  const[incoming,setIncoming]=useState(()=>parseAddLink());
+  const[incoming,setIncoming]=useState(()=>parseAddLink()||parsePendingAdd());
 
   useEffect(()=>{load();syncWeek();},[activeProgram]);
   useEffect(()=>{if(online)flushPending().then(n=>{if(n>0){setPc(getPending().length);load();}});},[online]);
@@ -827,7 +827,7 @@ function App({userEmail}){
       )}
       {tab==="train"&&!selDay&&<DaySelect userEmail={userEmail} days={days} onSelect={setSelDay} week={week} setWeek={setWeek} restDur={restDur} setRestDur={setRestDur} weekType={weekType} setWeekType={setWeekType} online={online} activeProgram={activeProgram} switchProgram={switchProgram} meas={meas} onAddMeas={(m,replace)=>setMeas(p=>(replace?p.map(x=>x.id===m.id?m:x):[...p,m]).sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))}/>}
       {tab==="train"&&selDay&&<Session day={selDay} onBack={()=>setSelDay(null)} week={week} restDur={restDur} weekType={weekType} isDeload={weekType==="Deload"} online={online} onPC={()=>setPc(getPending().length)} activeProgram={activeProgram}/>}
-      {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)}/>}
+      {tab==="fuel"&&<Fuel foods={foods} setFoods={setFoods} mt={mt} setMt={setMt} meas={meas} online={online} onPC={()=>setPc(getPending().length)} onAddItem={setIncoming}/>}
       {tab==="body"&&<Body mt={mt} meas={meas} onAdd={m=>setMeas(p=>[...p,m].sort((a,b)=>a.measure_date.localeCompare(b.measure_date)))} online={online} onPC={()=>setPc(getPending().length)}/>}
       {tab==="stats"&&<Stats meas={meas} week={week} online={online} activeProgram={activeProgram}/>}
       {tab==="skills"&&<SkillsSection supabase={supabase}/>}
@@ -848,16 +848,24 @@ function App({userEmail}){
 // Format (per serving):  /?add=<name>&p=<protein g>&c=<carbs g>&f=<fat g>&kcal=<calories>&servings=<n>&src=flavorfold
 // Opening the link (signed in) shows a confirm sheet; confirming saves the recipe to
 // foods (reused if the same name + calories already exists) and logs it for today.
-function parseAddLink(){
+// search: optional query string (e.g. from the clipboard); default is the current page URL.
+// A meal read from the page URL is also remembered for 2h (il_pending_add) so it survives the
+// sign-in screen: a link opened in a signed-out browser shows Login first, and email-link sign-in drops the query.
+function parseAddLink(search){
   try{
-    const q=new URLSearchParams(window.location.search);const name=(q.get("add")||"").trim().slice(0,120);if(!name)return null;
+    const fromUrl=search===undefined;
+    const q=new URLSearchParams(fromUrl?window.location.search:search);const name=(q.get("add")||"").trim().slice(0,120);if(!name)return null;
     const num=(k,max)=>{const v=parseFloat(q.get(k));return Number.isFinite(v)&&v>=0&&v<=max?Math.round(v*10)/10:null;};
     const item={name,protein:num("p",500),carbs:num("c",1000),fat:num("f",500),kcal:num("kcal",5000),servings:num("servings",20)||1,src:(q.get("src")||"").slice(0,30)};
     if(item.kcal==null&&item.protein!=null&&item.carbs!=null&&item.fat!=null)item.kcal=Math.round(item.protein*4+item.carbs*4+item.fat*9);
-    return item.kcal==null?null:item;
+    if(item.kcal==null)return null;
+    if(fromUrl){try{localStorage.setItem("il_pending_add",JSON.stringify({s:window.location.search,t:Date.now()}));}catch{}}
+    return item;
   }catch{return null;}
 }
-function clearAddLink(){try{const u=new URL(window.location.href);["add","p","c","f","kcal","servings","src"].forEach(k=>u.searchParams.delete(k));window.history.replaceState(null,"",u.pathname+(u.search||"")+u.hash);}catch{}}
+function parsePendingAdd(){try{const p=JSON.parse(localStorage.getItem("il_pending_add")||"null");if(!p||Date.now()-p.t>2*3600000)return null;return parseAddLink(p.s);}catch{return null;}}
+try{parseAddLink();}catch{}
+function clearAddLink(){try{localStorage.removeItem("il_pending_add");}catch{}try{const u=new URL(window.location.href);["add","p","c","f","kcal","servings","src"].forEach(k=>u.searchParams.delete(k));window.history.replaceState(null,"",u.pathname+(u.search||"")+u.hash);}catch{}}
 function AddFromLink({item,onDone}){
   const[servings,setServings]=useState(item.servings||1);
   const[busy,setBusy]=useState(false);const[err,setErr]=useState(null);
@@ -1716,7 +1724,18 @@ function Session({day,onBack,week,restDur,weekType,isDeload,online,onPC,activePr
   );
 }
 
-function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
+function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC,onAddItem}){
+  const[pasteMsg,setPasteMsg]=useState("");
+  // Home-screen apps can't be opened by a link from another app, so FlavorFold copies the link and this reads it back.
+  async function pasteFlavorFold(){
+    setPasteMsg("");
+    try{
+      const t=(await navigator.clipboard.readText())||"";
+      let s="";try{s=new URL(t.trim()).search;}catch{const i=t.indexOf("?add=");if(i>=0)s=t.slice(i);}
+      const item=s?parseAddLink(s):null;
+      if(item)onAddItem&&onAddItem(item);else setPasteMsg("No FlavorFold meal on the clipboard. In FlavorFold, tap Copy for IronLog first.");
+    }catch{setPasteMsg("Couldn't read the clipboard. Tap Paste when your phone asks.");}
+  }
   const[log,setLog]=useState([]);const[search,setSearch]=useState("");const[showS,setShowS]=useState(false);const[cat,setCat]=useState("All");const[showCalc,setShowCalc]=useState(false);const[showAdd,setShowAdd]=useState(false);const[showRecent,setShowRecent]=useState(false);const savedMt=cache.get("mt");
   const training=isTodayTraining();
   const activeMt=training?mt:{...mt,carbs:mt.restCarbs||Math.max(0,mt.carbs-100),calories:mt.restCalories||Math.max(1500,mt.calories-400)};
@@ -1825,6 +1844,10 @@ function Fuel({foods,setFoods,mt,setMt,meas=[],online,onPC}){
       {showAdd&&(<div style={{...card,marginBottom:12}}><div style={{...lbl,marginBottom:10}}>Custom food</div><input type="text" value={nf.name} onChange={e=>setNf(p=>({...p,name:e.target.value}))} placeholder="Food name" style={{...inpL,marginBottom:8}}/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><input type="number" inputMode="decimal" value={nf.portion_size} onChange={e=>setNf(p=>({...p,portion_size:e.target.value}))} placeholder="Portion" style={inp}/><input type="text" value={nf.portion_unit} onChange={e=>setNf(p=>({...p,portion_unit:e.target.value}))} placeholder="Unit" style={inpL}/></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>{[{k:"protein_g",l:"Pro"},{k:"carbs_g",l:"Carb"},{k:"fat_g",l:"Fat"},{k:"calories",l:"Cal"}].map(f=><div key={f.k}><div style={{...lbl2,marginBottom:3}}>{f.l}</div><input type="number" value={nf[f.k]} onChange={e=>setNf(p=>({...p,[f.k]:e.target.value}))} style={inp}/></div>)}</div><div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>{["Protein","Carb","Fat","Snack","Meal","Misc"].map(c=><button key={c} onClick={()=>setNf(p=>({...p,category:c}))} style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${nf.category===c?C.ac:C.bd}`,background:nf.category===c?`${C.ac}12`:"transparent",color:nf.category===c?C.ac:C.mt,fontSize:10,cursor:"pointer"}}>{c}</button>)}</div><button onClick={saveNewFood} style={btnP}>Save Food</button></div>)}
       {showS&&(<div style={{...card,marginBottom:12}}><input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search foods..." style={{...inpL,marginBottom:8}} autoFocus/><div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>{["All","Protein","Carb","Fat","RTD Protein","Snack","Meal","Misc"].map(c=><button key={c} onClick={()=>setCat(c)} style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${cat===c?C.ac:C.bd}`,background:cat===c?`${C.ac}12`:"transparent",color:cat===c?C.ac:C.mt,fontSize:10,cursor:"pointer"}}>{c}</button>)}</div><div style={{maxHeight:280,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>{flt.length===0?<div style={{padding:"20px 0",textAlign:"center",color:C.mt,fontSize:12}}>No foods found</div>:flt.map(f=><button key={f.id} onClick={()=>add(f)} style={{width:"100%",padding:"10px 4px",background:"none",border:"none",borderBottom:`1px solid ${C.bd}`,color:C.tx,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div><div style={{fontSize:10,color:C.mt,marginTop:1}}>{f.portion_size} {f.portion_unit}</div></div><div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:12,fontFamily:mono,color:C.gn,fontWeight:600}}>{f.protein_g}p</div><div style={{fontSize:9,color:C.mt,fontFamily:mono}}>{f.calories}cal</div></div></button>)}</div></div>)}
       {log.length>0&&(<div><div style={{...lbl,marginBottom:8}}>Today</div>{log.map((m,i)=><div key={m.id||i} style={{background:C.sf,borderRadius:10,border:`1px solid ${C.bd}`,padding:"10px 12px",marginBottom:5,display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.food}</div><div style={{fontSize:10,color:C.mt,fontFamily:mono,marginTop:1}}>{Math.round(m.protein*m.portions)}p · {Math.round(m.carbs*m.portions)}c · {Math.round(m.fat*m.portions)}f · {Math.round(m.calories*m.portions)}cal</div></div><div style={{display:"flex",alignItems:"center",gap:3}}><button onClick={()=>up(i,m.portions-0.5)} style={tbtn}>-</button><span style={{fontSize:12,fontFamily:mono,width:24,textAlign:"center"}}>{m.portions}</span><button onClick={()=>up(i,m.portions+0.5)} style={tbtn}>+</button></div><button onClick={()=>rm(i)} style={{background:"none",border:"none",color:C.rd,fontSize:16,cursor:"pointer",padding:"2px",flexShrink:0}}>×</button></div>)}</div>)}
+      <div style={{marginTop:8}}>
+        <button onClick={pasteFlavorFold} style={{...btnGhost,width:"100%",padding:"10px 14px"}}>Paste meal from FlavorFold</button>
+        {pasteMsg&&<div style={{marginTop:6,fontSize:11,color:C.mt}}>{pasteMsg}</div>}
+      </div>
       {/* ── AI Meal Plan ── */}
       <div style={{marginTop:8,marginBottom:8}}>
         <button onClick={()=>{setShowPlan(!showPlan);if(!showPlan&&!plan)generatePlan();}} style={{...btnGhost,width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"10px 14px",borderColor:showPlan?`${C.ac}44`:C.bd,color:showPlan?C.ac:C.mt}}>
