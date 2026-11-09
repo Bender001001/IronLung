@@ -25,8 +25,10 @@ async function requireAppUser(req, res) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!(await requireAppUser(req, res))) return;
-  const { foods, targets, preferences } = req.body;
+  const { foods, targets, preferences } = req.body || {};
   if (!foods || !targets) return res.status(400).json({ error: "Missing foods or targets" });
+  if (!Array.isArray(foods) || foods.length > 500 || typeof targets !== "object") return res.status(400).json({ error: "Invalid input" });
+  if (!["calories", "protein", "carbs", "fat"].every(k => Number.isFinite(Number(targets[k])))) return res.status(400).json({ error: "Invalid targets" });
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "API key not configured" });
@@ -120,7 +122,7 @@ MACRO TARGETS:
 - Fat: ${targets.fat}g (within ±15g)
 - Carbs: ${targets.carbs}g (hit as close as possible)
 
-${preferences ? `PREFERENCES: ${preferences}` : ""}
+${preferences ? `PREFERENCES: ${sanitize(preferences).slice(0, 300)}` : ""}
 
 RULES:
 1. Each meal must have 2-3 items. Use portions=1 for everything.

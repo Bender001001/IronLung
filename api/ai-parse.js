@@ -27,8 +27,10 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!(await requireAppUser(req, res))) return;
 
-  const { text, imageBase64, mimeType } = req.body;
+  const { text, imageBase64, mimeType } = req.body || {};
   if (!text && !imageBase64) return res.status(400).json({ error: "No input provided" });
+  if ((text && String(text).length > 1000) || (imageBase64 && String(imageBase64).length > 6000000)) return res.status(413).json({ error: "Input too large" });
+  if (mimeType && !/^image\/(jpeg|png|webp|heic|heif)$/.test(String(mimeType))) return res.status(400).json({ error: "Unsupported image type" });
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "API key not configured" });
